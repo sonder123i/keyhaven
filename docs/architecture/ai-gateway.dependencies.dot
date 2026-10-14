@@ -100,7 +100,12 @@ digraph AiGatewayDeps {
     RunLog         -> Core [label="compile-time", color="#1f6f5c"];
     RunLog         -> Storage [label="compile-time 写日志行"];
     Storage        -> Core [label="compile-time", color="#1f6f5c"];
-    Storage        -> Security [label="compile-time"];
+    // 【2026-10-15 实测删除】原 Storage -> Security 这条边不存在了。
+    // 原因：Security 侧已有 CredInjector -> Storage（取密文），两条边并存 = 程序集环，
+    // dotnet build 直接 MSB4006「目标依赖项关系图中存在循环依赖项」，不是坏味道而是构建失败。
+    // 修正后的唯一方向：Storage 只存取密文字节，加解密全在 Security；
+    // 「保存真实 Key」这个用例由 Core 端口 IRealKeyVault 承担，实现落在 Security，App 只见端口。
+    // 副作用是好的：能触达 SecretProtector 的程序集变少了，D6 的暴露面论证更强。
     Security       -> Core [label="compile-time", color="#1f6f5c"];
     ViewModels     -> Core [label="compile-time 只依赖端口", color="#1f6f5c"];
     Views          -> ViewModels [label="compile-time (XAML Binding)"];
@@ -115,7 +120,12 @@ digraph AiGatewayDeps {
     Hosting -> Storage [label="config-wiring"];
     Hosting -> Security [label="config-wiring"];
     Hosting -> CredInjector [label="config-wiring"];
-    Hosting -> ViewModels [label="config-wiring"];
+    // 【2026-10-15 实测删除】原 Hosting -> ViewModels 这条 config-wiring 边不存在了。
+    // 原因：可执行入口在 App 程序集里（App.xaml.cs 要调 Hosting.AddAiGateway() 启 Kestrel），
+    // 于是 Hosting -> ViewModels(在 App 内) 与 App -> Hosting 构成程序集环，同样撞 MSB4006。
+    // 修正后的方向是单向的：Hosting 只绑定非 UI 的具体实现，ViewModel 由 App 自己注册。
+    // 两个收益同时拿到：D3 的"AiGateway.App.exe 是唯一可部署单元"成立，
+    // 且将来第二个入口（headless/CLI）引用 Hosting 时不会被迫拖进 WPF。
 
     // ---------- 运行时 / 数据访问（不是编译期依赖，分开标注） ----------
     ClaudeCode -> HttpEndpoints [label="runtime-call HTTP+SSE :8000\n头带【代理密钥】", style=dashed, color="#c0392b"];

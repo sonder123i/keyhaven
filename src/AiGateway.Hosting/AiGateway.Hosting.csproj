@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>AiGateway.Hosting</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../AiGateway.Core/AiGateway.Core.csproj" />
+    <ProjectReference Include="../AiGateway.Gateway/AiGateway.Gateway.csproj" />
+    <ProjectReference Include="../AiGateway.Mapping.Anthropic/AiGateway.Mapping.Anthropic.csproj" />
+    <ProjectReference Include="../AiGateway.Mapping.OpenAI/AiGateway.Mapping.OpenAI.csproj" />
+    <ProjectReference Include="../AiGateway.Providers/AiGateway.Providers.csproj" />
+    <ProjectReference Include="../AiGateway.Storage/AiGateway.Storage.csproj" />
+    <ProjectReference Include="../AiGateway.Security/AiGateway.Security.csproj" />
+  </ItemGroup>
+</Project>

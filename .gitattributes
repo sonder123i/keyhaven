@@ -1,0 +1,21 @@
+* text=auto
+
+*.cs text
+*.xaml text
+*.csproj text
+*.props text
+*.targets text
+*.sln text
+*.json text
+*.dot text
+*.dsl text
+*.csv text
+*.md text
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.db binary
+*.dll binary
+*.exe binary
+*.pdb binary

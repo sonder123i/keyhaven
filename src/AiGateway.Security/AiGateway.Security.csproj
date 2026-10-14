@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>AiGateway.Security</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../AiGateway.Core/AiGateway.Core.csproj" />
+    <ProjectReference Include="../AiGateway.Storage/AiGateway.Storage.csproj" />
+  </ItemGroup>
+</Project>

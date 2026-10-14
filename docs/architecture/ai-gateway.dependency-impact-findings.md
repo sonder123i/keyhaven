@@ -8,7 +8,7 @@
 - 机器可读违规表：`docs/architecture/ai-gateway.violations.csv`
 - **本轮补充需求（D5 轻量极简 / D6 代理密钥）落在：** §1 读图顺序、§2 耦合表 + 暴露面量化、§3 类型清单第 4/5 条、§4.4 后门边、§5 两行不可逆项、§6 第二难点、§7 四条新断言、§8 三条新未闭环项
 
-> ⚠️ 本机没有 Graphviz 二进制（`command -v dot` 无输出），DOT 未经 `dot -Tsvg` 实渲验证。已人工核对节点形状与边属性均为合法键，但**布局效果未被证明**。
+> ✅ **2026-10-14 已实渲**（Graphviz 16.1.0）。`request-flow.dot` 一次通过；`dependencies.dot` **首渲失败** —— `trouble in init_rank` 级联 `triangulation failed` / `lost ViewModels Storage edge`，根因是 `FORBIDDEN-*` 禁止边带着 rank 约束，而其中含 `AnthropicCodec⇄OpenAiCodec`、`Core⇄StreamRelay` 两个 2-环与两个 3-环，dot 分层器要求约束图必须是 DAG。修法：那一整块加 `constraint=false`（禁令本来就不该参与布局）。布局效果现已被证明。
 
 ---
 
@@ -85,6 +85,39 @@ Java/JS 里循环依赖是债务；在 .NET 里 `CS0146 / A circular dependency 
 5. **`ProxyKeyFingerprint`**（一个只包裹前缀片段的新类型，不包裹完整密钥）：这是 `FORBIDDEN-06` 从"审查条款"变成**编译器条款**的机制 —— 日志写入器的参数类型是 `ProxyKeyFingerprint`，谁想塞明文就必须先显式构造它，而那会在 code review 里刺眼。类型即护栏。
 
 > 第 5 条是这套设计里最便宜的强约束：**用类型而不是规则来守边界**。一条自然语言规则会被忘，一个不接受 `string` 的方法签名不会。
+
+### 3.1 实测记录（2026-10-15，S1 骨架）：本图的组件级边集**不能**直接落成程序集引用
+
+按 `ai-gateway.dependencies.dot` 的编译期边原样建 10 个 csproj，`dotnet build` 立刻失败：
+
+```
+error MSB4006: 涉及目标"_GenerateRestoreProjectPathWalk"的目标依赖项关系图中存在循环依赖项。
+  [src\AiGateway.Security\AiGateway.Security.csproj]
+  [src\AiGateway.Hosting\AiGateway.Hosting.csproj]
+```
+
+两处环，都不是意外，而是"组件级图"压到"程序集级图"时的必然折叠产物：
+
+| 环 | 组成 | 修正 | 修正后的额外收益 |
+| --- | --- | --- | --- |
+| **C1** | `Storage → Security`（存密文要加密）⇄ `CredInjector → Storage`（注入要取密文） | 删 `Storage → Security`。Storage 只存取字节；加解密全在 Security，方向唯一。"保存真实 Key"这个用例改由 Core 端口 `IRealKeyVault` 承担，实现落在 Security，App 只见端口 | 能触达 `SecretProtector` 的程序集**变少**了 → §2 那条"暴露面 = 1 节点 1 边"的论证比原来更强，不是更弱 |
+| **C2** | `Hosting → ViewModels`（装配 VM）⇄ `App → Hosting`（入口调 `AddAiGateway()`） | 删 `Hosting → ViewModels`。组合根只绑非 UI 的具体实现，VM 由可执行入口自己注册 | D3 的"`AiGateway.App.exe` 是唯一可部署单元"成立，且第二个入口（headless/CLI）引用 Hosting 时不会被拖进 WPF —— 正是 §2 结尾担心的那个重复问题 |
+
+**这条经验值得留在文档里**：组件图与程序集图不是一个粒度。图上一个节点对应一个组件，而环是在**程序集**上判定的；同一程序集内的两个组件之间的边无害，跨程序集折叠后就可能成环。所以任何"照图建引用"的动作，第一步必须是 `dotnet build` 而不是写代码 —— S1 存在的意义就在这里。
+
+修正后的可编译引用清单（已落地，`dotnet build` 0 警告 0 错误）：
+
+```
+Core                     → （空，FORBIDDEN-02 的机器化前提）
+Mapping.Anthropic / .OpenAI → Core
+Providers                → Core
+Storage                  → Core
+Security                 → Core, Storage
+Gateway                  → Core, Storage, Providers
+Hosting                  → Core, Gateway, Mapping.*, Providers, Storage, Security
+App (WinExe)             → Core, Hosting
+ArchitectureTests        → 以上全部
+```
 
 ## 4. 切断点分析：三条会自然长出来的边/环，如何在设计期消掉
 
@@ -233,4 +266,9 @@ DPAPI 解密调用点计数 == 1                                      ← §4.4 
 
 ## 9. 下一步
 
-阶段 4 开工前的唯一硬阻塞：本机 **没有 .NET SDK**（只有 `Microsoft.WindowsDesktop.App 8.0.28` 运行时，`C:\Program Files\dotnet\sdk` 不存在）。不装 SDK 无法 `dotnet new` / `dotnet build`，C4 里所有容器都无法实例化。
+阶段 4 开工前的硬阻塞（本机无 .NET SDK）**已于 2026-10-14 清除**：SDK `8.0.426` 装好并真编译过 `net8.0-windows`。
+
+下一步是把本模型拆成带依赖顺序的实现计划，且计划里必须**先**排这三件事，不能等全部写完再补：
+1. `UNKNOWN-01` 存储选型（Dapper vs EF Core）用一次 spike 决出，不要赌。
+2. `RISK-04` + §5 前瞻约束第 2 条要求**尽早做真客户端端到端探针**（`count_tokens` 依赖强度、`content_block_index` 配对），用一个桩服务即可，不必等管道写完。
+3. 两处单向门（DPAPI scope/entropy、代理密钥哈希方案）必须在**写入第一行数据之前**把 `protector_id`/`key_version`/`algo_version`/`enabled` 四列建进 schema。

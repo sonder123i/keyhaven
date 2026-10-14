@@ -148,10 +148,10 @@ HttpEndpoints ─► ProxyKeyAuthenticator ─ ─(仅指纹/RouteProfile)─ �
 - **可视化检查**：用 Qoder 的 Structurizr DSL viewer 打开 `docs/architecture/ai-gateway.structurizr.dsl`（三视图都在 `views {}` 里）。
 - **数据流 / 请求生命周期**：`docs/architecture/ai-gateway.request-flow.dot`（用 DOT viewer 打开）。读法：绿色加粗是主路径；**唯一一条红色粗边是真实 Key 出进程的那一步**，其余任何位置出现明文 Key 都是违规；三个红色节点（401 / 路由失败 / 上游错误）与一条反向控制边（客户端中止 → 取消上游）是**刻意画出来的断头**，不是 happy path 的装饰。
 - **依赖与影响半径**：`docs/architecture/ai-gateway.dependencies.dot` + `ai-gateway.dependency-impact-findings.md`。
-- **我没能验证的事**（如实说明）：
-  - 本机无 Graphviz 二进制，**两个 DOT 文件都未实渲**。
-  - 本机无 .NET SDK，DSL 也没能被 Structurizr CLI 解析校验；语法按插件的 token 上限规则（`person`/`softwareSystem` ≤3、`container`/`component` ≤4 位置参数）人工核对过，且样式块只用 `shape/background/color/dashed/opacity` 这些跨版本稳定的属性。
-  - **所以"能渲染"这件事本身尚未被证明。** 第一次打开若某视图空白，先修 DSL 源，不要手改导出物。
+- **我没能验证的事**（2026-10-14 复核后如实更新）：
+  - ~~本机无 Graphviz~~ → **已装 16.1.0，两个 DOT 都已真渲**。`request-flow.dot` 一次通过；`dependencies.dot` 首渲失败（禁止边带 rank 约束成环 → `trouble in init_rank`），加 `constraint=false` 后 stderr 全空。
+  - ~~本机无 .NET SDK~~ → **已装 8.0.426**，并用临时 WPF 项目真编译过 `net8.0-windows`（0 警告 0 错误）。
+  - **仍然未验证：`.dsl` 至今没被 Structurizr 解析器读过**（本机无 Structurizr CLI，只有 JDK 25 可跑它）。语法只按插件 token 上限规则人工核对。所以 L1/L2/L3 三视图"能打开"这件事还没被证明——第一次打开若空白，**改 DSL 源，别手改导出物**。
 
 ## 维护约定
 

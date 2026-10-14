@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AiGateway.Core\AiGateway.Core.csproj" />
+    <ProjectReference Include="..\..\src\AiGateway.Mapping.Anthropic\AiGateway.Mapping.Anthropic.csproj" />
+    <ProjectReference Include="..\..\src\AiGateway.Mapping.OpenAI\AiGateway.Mapping.OpenAI.csproj" />
+    <ProjectReference Include="..\..\src\AiGateway.Gateway\AiGateway.Gateway.csproj" />
+    <ProjectReference Include="..\..\src\AiGateway.Providers\AiGateway.Providers.csproj" />
+    <ProjectReference Include="..\..\src\AiGateway.Storage\AiGateway.Storage.csproj" />
+    <ProjectReference Include="..\..\src\AiGateway.Security\AiGateway.Security.csproj" />
+    <ProjectReference Include="..\..\src\AiGateway.Hosting\AiGateway.Hosting.csproj" />
+    <ProjectReference Include="..\..\src\AiGateway.App\AiGateway.App.csproj" />
+  </ItemGroup>
+</Project>
