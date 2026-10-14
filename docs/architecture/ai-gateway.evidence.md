@@ -68,7 +68,7 @@
 | OPEN-07 | 首个上游 | **已决**：DeepSeek 直通（D14）；需要你提供 DeepSeek Key |
 | OPEN-11 | 发布形态：依赖框架（目标机需装 ASP.NET Core + WindowsDesktop 两个运行时）还是自包含（体积大） | **开着**：计划 S10 实测两种产物体积后由你选 |
 | OPEN-12 | DeepSeek 是否接受 `?beta=true`、是否支持 `count_tokens`、错误体是否回显 Key | **开着**：M1 验收实测（计划 S8） |
-| OPEN-13 | IHttpClientFactory 自带日志处理器是否给鉴权头打码 | **开着**：计划 S5 实测，默认行为未核实 |
+| OPEN-13 | IHttpClientFactory 自带日志处理器是否给鉴权头打码 | **已决（S5 实测）**：不打码，Trace 级原样记录真实 Key；`RedactLoggedHeaders` 只打码格式化文本，结构化字段仍是明文 ⇒ 上游客户端用 `RemoveAllLoggers()`，护栏⑦守住 |
 
 ## 6. 刻意不画的东西
 

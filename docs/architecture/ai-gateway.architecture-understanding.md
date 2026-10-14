@@ -108,7 +108,7 @@
 - ✅ 外部事实见 §3（附网址）。
 - ✅ 骨架已按 D11 重做为 3 + 1 个项目（计划 S1）：AiGateway 碰不到 Security 有编译期两道拦截（NU1201、MSB4006）加护栏测试；App 构造 Security 内部类型即 CS0122。
 - ❌ DeepSeek 是否接受 `?beta=true`、是否支持 `count_tokens`、错误体是否回显 Key——M1 验收时实测。
-- ❌ IHttpClientFactory 自带日志处理器是否给鉴权头打码——计划 S5 实测，默认行为未核实。
+- ✅ IHttpClientFactory 自带日志**不**给鉴权头打码，`RedactLoggedHeaders` 也只管格式化文本、结构化字段仍是明文（S5 实测）⇒ 上游客户端拿掉全部内置日志处理器，并禁止自动跟随重定向。
 
 ## 8. 维护约定
 

@@ -30,13 +30,17 @@ AiGateway.Tests ──► 以上全部（InternalsVisibleTo）
 | # | 断言 | 拦什么 |
 | --- | --- | --- |
 | ① | `src/AiGateway/AiGateway.csproj` 里没有指向 Security 的 `ProjectReference`；**且** AiGateway 程序集元数据不引用 Security | 有人给 AiGateway 加 Security 引用。**只查元数据不够**（S1 实测）：编译器会删掉没被代码用到的引用，"只加引用不写代码"时元数据检查仍是绿的，所以要同时查 csproj |
-| ② | 全 `src/` 里 `ProtectedData.Unprotect` 恰好出现 1 次，在 `SecretProtector.cs`（S2 落地）；S5 起再加一条：`SecretProtector.Unprotect` 只被注入处理器调用 | 第二个解密点 |
-| ③ | `src/AiGateway.Security/` 源码里不出现 `HttpClient`、`IHttpClientFactory`、`SocketsHttpHandler`、`HttpClientHandler`、`new HttpRequestMessage`（`base.SendAsync` 除外） | 注入器自己发请求（FORBIDDEN-09） |
+| ② | 全 `src/` 里 `ProtectedData.Unprotect` 恰好出现 1 次，在 `SecretProtector.cs`（S2）；且 `SecretProtector.Unprotect` 只被 `CredentialInjectingHandler` 调用（S5） | 第二个解密点。两级都红灯实测过 |
+| ③ | `src/AiGateway.Security/` 源码里不出现 `HttpClient`、`IHttpClientFactory`、`SocketsHttpHandler`、`HttpClientHandler`、`HttpMessageInvoker` 这几个词（整词匹配，`AddHttpClient` 不算），也不出现 `new HttpRequestMessage` | 注入器自己发请求（FORBIDDEN-09）。S5 红灯实测：在 Security 里 `new HttpClient()` 即红 |
 | ④ | `IRealKeyVault` 的所有成员返回 `void` / `bool` / `Task` / `Task<bool>` | 只写端口被加上读方法（FORBIDDEN-10） |
 | ⑤ | 吊销一个代理密钥后，下一个请求返回 401 | 内存快照没随写入替换（DECIDED-01） |
 | ⑥ | 设了 `ASPNETCORE_URLS` 与 `Kestrel__Endpoints__*` 环境变量后，监听地址仍然只有一个 `127.0.0.1` | D9 被环境变量绕过。**S3 红灯实测**：换回默认的 `WebApplication.CreateBuilder()`，环境变量就多开了一个 `0.0.0.0` 监听；所以宿主用空构建器，什么配置源都不读 |
+| ⑦ | 上游命名客户端**不写任何内置日志**（抓取器在 Trace 级证明自己在工作，同时上游客户端类别下零条日志、所有日志含结构化字段里都搜不到 Key） | Key 进日志（RISK-11 / OPEN-13）。**S5 实测**：默认在 Trace 级原样记录 `x-api-key: 真实Key`；改用 `RedactLoggedHeaders` 后格式化文本变成 `*`，但**结构化字段里仍是明文**，JSON / Serilog 这类结构化输出会照写——所以用 `RemoveAllLoggers()` 整个拿掉 |
+| ⑧ | 上游返回 302 时原样把 302 交回，不跟过去，另一台主机收不到任何请求 | `x-api-key` 是自定义头，跟随重定向会把它带到别的主机。S5 红灯实测 |
+| ⑨ | 请求发出后，持有该请求对象的代码在头里找不到 `x-api-key` | 网关代码事后从请求对象读到明文。S5 红灯实测 |
+| ⑩ | 请求自带的 `x-api-key` / `Authorization`（比如误转发的代理密钥）被替换，上游只看到真实 Key | 代理密钥被转发到上游。S5 红灯实测 |
 
-②③ 是源码级 grep 断言，粗糙但够用：它们守的是"出现了就一定该有人看一眼"的东西。ArchUnitNET 不再需要。
+①②③ 是源码 / 项目文件级断言，粗糙但够用：它们守的是"出现了就一定该有人看一眼"的东西；④–⑩ 是行为级测试，⑦–⑩ 用一个真实 Kestrel 桩上游跑。ArchUnitNET 不再需要。
 
 **类型护栏**（不用测试，签名本身就拦）：
 - 日志写入器只接受 `ProxyKeyFingerprint`，不接受 `string`——想塞明文就得显式构造它，review 时刺眼（FORBIDDEN-06）。**指纹 = 代理密钥 SHA-256 的前 8 位十六进制**（S4 定稿），不是明文前缀：日志和 UI 里不出现明文的任何一部分，用户靠创建时的标签认密钥。
@@ -67,7 +71,9 @@ AiGateway.Tests ──► 以上全部（InternalsVisibleTo）
 | 注入器做成公共端口（`Apply(providerId, headerSink)`），上游客户端调用 | 同一扇 DI 后门：任何类注入它、自传 sink 就接走明文 | ✗（我曾推荐过，review 时推翻） |
 | **H：注入器是 `DelegatingHandler`，组合根把它挂进上游 HttpClient 管道** | Security 要依赖 `System.Net.Http` 的 `DelegatingHandler`；FORBIDDEN-09 的检测改为精确意图（护栏③） | ✓ D12 |
 
-H 的收益：没有任何代码能调用注入器；上游客户端不经手明文、甚至不知道注入器存在；provider id 经请求选项传递，键名是 AiGateway 里的一个字符串常量。
+H 的收益：没有任何代码能调用注入器；上游客户端不经手明文、甚至不知道注入器存在；provider id 经请求选项传递，键名是 AiGateway 里的 `UpstreamRequest.ProviderId`。
+
+**S5 落地后的细节**：注入时先清掉请求上已有的 `x-api-key` 与 `Authorization`（护栏⑩），再写入真实 Key，**请求发完立即删掉**（护栏⑨）；目前只写 `x-api-key`（Anthropic 与 DeepSeek 都认），M2 接 OpenAI 时再按上游类型加 `Authorization: Bearer`。"激活快照"没有另起一份数据：路由每次只读一次 `ConfigStore.Current`，从同一份快照里拿激活项、Provider 和"有没有 Key"，切换时不会读到半新半旧。
 
 ## 5. 变更影响（哪个改动最贵）
 

@@ -15,7 +15,8 @@ RISK-07,MEDIUM,AiGateway.App,WPF Dispatcher,threading,请求线程回调 Dispatc
 RISK-08,HIGH,本机不受信来源（浏览器网页 / DNS rebinding / 其他程序）,127.0.0.1 监听端口,network,写死回环挡不住本机浏览器里的网页；没有鉴权就能被网页借用上游额度,D6 代理密钥鉴权：除 /health 外一律先验密钥，未知路径也一样（不暴露哪些路径存在）；测试覆盖无密钥 / 伪造密钥 / 吊销后,medium,S4 落地；2026-10-15 更正旧版"回环无攻击面"的理由；替代旧 RISK-02（旧表里 RISK-02 出现了两行重复 ID）
 RISK-09,HIGH,AiGateway（直通转发器）,Anthropic 兼容上游,protocol-fidelity,官方网关协议要求转发 anthropic-version（去掉会坏）与 anthropic-beta（去掉可能 400）；Claude Code 请求带 ?beta=true,集成测试（桩上游）断言头与查询串原样到达 + M1 真客户端验收,high,来源 https://code.claude.com/docs/en/llm-gateway-protocol
 RISK-10,MEDIUM,用户关窗,Kestrel,availability,同进程（D3）下关掉主窗口即停代理，Claude Code 立刻报错,托盘常驻：关窗只隐藏，托盘菜单才退出（计划 S3）,high,review 补
-RISK-11,MEDIUM,IHttpClientFactory 自带日志处理器,鉴权头,data-leak,它排在注入处理器内侧（更靠近网络），可能记录写入后的鉴权头,计划 S5 实测；没打码就显式配置打码并加测试,low,默认行为未核实（OPEN-13）
+RISK-11,CLOSED,IHttpClientFactory 自带日志处理器,鉴权头,data-leak,S5 实测：默认在 Trace 级原样记录请求头（x-api-key: 真实 Key）；RedactLoggedHeaders 只给格式化文本打码，结构化字段里仍是明文，JSON / Serilog 等结构化输出会照写,上游命名客户端 RemoveAllLoggers() + 护栏⑦（抓取器先证明自己在工作，再断言零条上游客户端日志且全部日志含结构化字段都搜不到 Key）,high,OPEN-13 已关闭；红灯实测：去掉 RemoveAllLoggers 即红
+RISK-14,HIGH,上游重定向,别的主机,data-leak,x-api-key 是自定义头；HttpClient 跟随重定向时会把它带到 Location 指向的主机,上游客户端 AllowAutoRedirect=false + 护栏⑧（302 原样交回，另一台主机收不到请求）,high,S5 新增；红灯实测：允许重定向即红
 RISK-12,LOW,上游错误体,入站响应,data-leak,直通原样透传上游错误体；若上游回显完整 Key 就会泄到客户端,M1 验收实测（计划 S8）,low,主流上游只回显打码片段，未逐家核实（OPEN-12）
 RISK-13,HIGH,环境变量 / appsettings,Kestrel 监听地址,binding-scope,默认宿主构建器会读 ASPNETCORE_URLS 与 Kestrel__Endpoints__* 并追加监听，悄悄打开 0.0.0.0，D9 失效,宿主用 WebApplication.CreateEmptyBuilder（不读任何配置源）+ 护栏⑥测试,high,S3 红灯实测：换回 CreateBuilder() 后环境变量真的多开了 0.0.0.0 监听
 DECIDED-01,HIGH,AiGateway（代理密钥验证器）,已启用哈希的内存快照,correctness,吊销要即刻生效；同进程下写配置的同时整体替换内存快照即可，不必每请求读盘,护栏⑤：吊销后下一个请求必须 401（S4 落地：快照就是 ConfigStore.Current，写入即替换；红灯实测——给鉴权加一次性缓存后该测试变红）,high,2026-10-15 修订：原"每请求现查库、不加缓存"的前提（写入方在别处）在 D3 下不成立

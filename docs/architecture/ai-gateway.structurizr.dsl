@@ -33,7 +33,7 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关 —— 
                 proxyKeyAuthenticator = component "代理密钥验证器" "[AiGateway] 从 x-api-key 或 Authorization: Bearer 取代理密钥，SHA-256 后与已启用哈希的内存快照做 FixedTimeEquals（D8/D10）。快照随配置写入整体替换，吊销即刻生效，不每请求读盘。失败回 Anthropic 形状 401。" "SHA-256 + FixedTimeEquals" {
                     tags "Lib"
                 }
-                activationState = component "激活快照" "[AiGateway] 当前激活的 (Provider, 上游类型, BaseUrl, 真实模型名)。不可变快照，切换时整体替换（D7：路由唯一来源）。" "Volatile 引用 + 不可变 record" {
+                activationState = component "激活快照" "[AiGateway] 当前激活的 (Provider, 上游类型, BaseUrl, 真实模型名)。不另起数据：就是配置快照 ConfigStore.Current 里的激活项，切换即整体替换配置快照（D7：路由唯一来源）；路由每次只读一份快照，不会读到半新半旧。" "ConfigStore.Current（不可变 record，Volatile 替换）" {
                     tags "Lib"
                 }
                 routeResolver = component "路由解析" "[AiGateway] 读激活快照，决定走直通还是翻译、真实模型名是什么。不读代理密钥的任何属性。" "C#" {
@@ -48,7 +48,7 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关 —— 
                 toolCallSession = component "工具调用增量重编码" "[AiGateway] OpenAI tool_calls 扁平分片（index / 首片 id+name / 后续 arguments、无结束标记）→ Anthropic content_block_start / input_json_delta / content_block_stop，块索引严格配对。全设计唯一的协议难点。" "C#" {
                     tags "Lib,Milestone2,HighRisk"
                 }
-                upstreamClients = component "上游 HTTP 客户端" "[AiGateway] IHttpClientFactory 命名客户端；只在请求选项里设 provider id，代码不经手真实 Key，也不知道注入器存在。" "IHttpClientFactory" {
+                upstreamClients = component "上游 HTTP 客户端" "[AiGateway] IHttpClientFactory 命名客户端；只在请求选项里设 provider id，代码不经手真实 Key，也不知道注入器存在。不跟随重定向（x-api-key 会被带到别的主机）；移除全部内置日志处理器（S5 实测：Trace 级会原样记录真实 Key，打码只盖格式化文本、盖不住结构化字段）。" "IHttpClientFactory" {
                     tags "Lib"
                 }
                 configStore = component "配置存储" "[AiGateway] 读写 config.json：Provider 元数据、Key 密文（含 protector_id / key_version）、代理密钥哈希（含 algo_version / enabled）、激活档、端口。原子写；启动时读一次，之后以内存快照为准。" "System.Text.Json" {
@@ -58,7 +58,7 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关 —— 
                     tags "Lib"
                 }
 
-                credentialInjector = component "真实密钥注入处理器" "[AiGateway.Security] HttpClient 管道里的 DelegatingHandler，由组合根经 Security 唯一的公开注册方法挂进上游客户端；没有任何组件能调用它。按请求选项里的 provider id 取密文 → 解密 → 只写经过它的这次请求的鉴权头。不构造、不发起请求。" "DelegatingHandler" {
+                credentialInjector = component "真实密钥注入处理器" "[AiGateway.Security] HttpClient 管道里的 DelegatingHandler，由组合根经 Security 唯一的公开注册方法挂进上游客户端；没有任何组件能调用它。按请求选项里的 provider id 取密文 → 解密 → 先清掉请求上已有的 x-api-key 与 Authorization，再写入真实 Key 的 x-api-key；请求发完立即删掉该头，持有请求对象的代码事后读不到。不构造、不发起请求。" "DelegatingHandler" {
                     tags "Security,HighRisk"
                 }
                 secretProtector = component "DPAPI 保护器与只写密钥库" "[AiGateway.Security] DPAPI CurrentUser + 每 Provider 独立 entropy。对外只实现只写端口 IRealKeyVault（Save / Delete / Exists），签名上拿不到明文；解密只供注入处理器在程序集内部使用。" "System.Security.Cryptography.ProtectedData" {

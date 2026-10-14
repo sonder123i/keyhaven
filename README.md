@@ -18,7 +18,7 @@ C# / .NET 8 WPF 桌面应用。Claude Code 把 `ANTHROPIC_BASE_URL` 指向本机
 | --- | --- |
 | 1–3 探索 / 澄清 / 架构 | ✅ **2026-10-15 review 后重写**（第一版出自上一个模型；为什么改见下文与 `evidence.md` §2） |
 | 4 实现计划 | ✅ **13 个故事**：`docs/plan/ai-gateway.implementation-plan.json`。M1 = S1–S8（DeepSeek 直通可用），M2 = S11–S12（OpenAI 翻译） |
-| 5 编码 | 🟡 **S1–S4 完成（2026-10-15）**：3 + 1 个项目；`config.json` + DPAPI 只写密钥库；网关宿主（只监听 `127.0.0.1:8000`、`/health`、单实例、托盘常驻，托盘退出已验证）；**代理密钥**：签发 `sk-aigw-` + 256 位随机（明文只回显一次，磁盘只存 SHA-256）、`x-api-key` / `Bearer` 两种头都认、无密钥或被吊销一律 Anthropic 形状 401、吊销对下一个请求即刻生效。37 个测试全绿，红灯演示与进程外 curl 演示已实测。`/v1/messages` 目前回 503"尚无激活上游"。**下一步 = S5**（激活快照 + 路由 + 注入处理器） |
+| 5 编码 | 🟡 **S1–S5 完成（2026-10-15）**：3 + 1 个项目；`config.json` + DPAPI 只写密钥库；网关宿主（只监听 `127.0.0.1:8000`、单实例、托盘常驻）；代理密钥（签发 / 鉴权 / 即刻吊销）；**路由与真实 Key 注入**：路由从同一份配置快照读激活项；上游客户端不跟随重定向、不写任何内置日志；注入处理器先清掉入站凭证、写入真实 Key、发完即删。52 个测试全绿，每道防线都做过红灯演示。**S5 实测关闭 OPEN-13**：HttpClient 自带日志会原样记下真实 Key，打码也只盖住文本、盖不住结构化字段。**下一步 = S6**（直通转发器，M1 核心） |
 
 ## 先读这些（按顺序）
 
@@ -67,4 +67,3 @@ C# / .NET 8 WPF 桌面应用。Claude Code 把 `ANTHROPIC_BASE_URL` 指向本机
 
 - `OPEN-11` 发布形态：依赖框架还是自包含——S10 实测数字后由你选。已知（S1 实测 runtimeconfig）：App 需要 **3 个**共享框架（Microsoft.NETCore.App、WindowsDesktop.App、AspNetCore.App），依赖框架发布时目标机要装齐。
 - `OPEN-12` DeepSeek 是否接受 `?beta=true`、是否支持 `count_tokens`、错误体是否回显 Key——S8 实测。
-- `OPEN-13` IHttpClientFactory 自带日志处理器是否给鉴权头打码——S5 实测。
