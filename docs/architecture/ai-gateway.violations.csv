@@ -2,8 +2,8 @@ rule_id,severity,from,to,edge_type,reason,detection,confidence,note
 FORBIDDEN-03,MEDIUM,AiGateway.App（ViewModels）,AiGateway 与 AiGateway.Security 的内部类型,compile-time,UI 直接操作存储或保护器会绕开端口；明文 Key 一旦进 ViewModel 字段就难保不外泄,两个库默认 internal、各只公开一个注册方法 + 代码审查：ViewModel 不得持有 Key 字符串字段,high,2026-10-15 改写：原规则依赖 10 程序集的引用隔离；合并原 FORBIDDEN-03b 与 FORBIDDEN-08
 FORBIDDEN-04,MEDIUM,请求处理路径,AiGateway.App（UI）,runtime-call,请求线程回调 UI 会形成运行时环并可能与 Dispatcher 死锁,请求路径不得调用 Dispatcher.Invoke/InvokeAsync；UI 通知只走单向事件,medium,与 RISK-07 同源
 FORBIDDEN-05,MEDIUM,AiGateway（除配置存储外）,config.json,file-access,绕过配置存储直接读写文件会让加密字段与原子写出现两处真相,只有配置存储组件触碰该文件（代码审查）,medium,2026-10-15 改写：原为"绕过仓储直连 SQLite"
-FORBIDDEN-06,HIGH,AiGateway（运行日志）,AiGateway.Security,data-leak,日志侧一旦能拿到真实 Key，一行日志就成了外泄通道；日志只允许记代理密钥指纹,编译期：AiGateway 不引用 Security（护栏①）+ 日志写入器只接受 ProxyKeyFingerprint 类型,high,保留
-FORBIDDEN-07,HIGH,AiGateway（代理密钥验证器）,AiGateway.Security,privilege-creep,鉴权器若能解密，401 失败路径就站在明文 Key 的可达范围内,编译期：AiGateway 不引用 Security（护栏①）,high,保留
+FORBIDDEN-06,HIGH,AiGateway（运行日志）,AiGateway.Security,data-leak,日志侧一旦能拿到真实 Key，一行日志就成了外泄通道；日志只允许记代理密钥指纹,编译期：AiGateway 引不到 Security（NU1201 目标框架不兼容 + MSB4006 反向成环；S1 实测）+ 护栏① + 日志写入器只接受 ProxyKeyFingerprint 类型,high,保留
+FORBIDDEN-07,HIGH,AiGateway（代理密钥验证器）,AiGateway.Security,privilege-creep,鉴权器若能解密，401 失败路径就站在明文 Key 的可达范围内,编译期：AiGateway 引不到 Security（NU1201 + MSB4006；S1 实测）+ 护栏①,high,保留
 FORBIDDEN-09,HIGH,AiGateway.Security（注入处理器）,上游 API,runtime-call,注入器自己发请求会让真实 Key 出现第二条外发路径；它只能改经过它的请求头,护栏③：Security 源码不出现 HttpClient / IHttpClientFactory / SocketsHttpHandler / HttpClientHandler / new HttpRequestMessage（base.SendAsync 除外）；Security 不引用上游客户端,high,2026-10-15 定稿 H：注入器是组合根挂进上游 HttpClient 管道的 DelegatingHandler
 FORBIDDEN-10,HIGH,任意代码,IRealKeyVault,data-leak,只写密钥库一旦能读，任何能拿到该接口的类都能经 DI 取得明文，而类型 / 引用 / 解密点计数三层防线全绿,护栏④：IRealKeyVault 所有成员只返回 void / bool / Task / Task<bool>,high,2026-10-15 review 新增
 DECRYPT-ONCE,HIGH,全工程,ProtectedData.Unprotect,invariant,解密点多于一处就说明有人开了第二条后门；这是代理密钥机制成立与否的判据,护栏②：src 下恰好 1 处且在注入处理器,high,原"解密调用点计数 == 1"独立成行

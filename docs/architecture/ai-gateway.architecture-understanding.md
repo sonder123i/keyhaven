@@ -106,7 +106,7 @@
 
 - ✅ DSL 解析通过并导出 L1/L2/L3（Structurizr CLI v2025.11.09）；两张 DOT 实渲无报错（Graphviz 16.1.0）。
 - ✅ 外部事实见 §3（附网址）。
-- ❌ 仓库里现有的 10 项目骨架是**旧架构**，与本文不符，下一步重做（计划 S1）。
+- ✅ 骨架已按 D11 重做为 3 + 1 个项目（计划 S1）：AiGateway 碰不到 Security 有编译期两道拦截（NU1201、MSB4006）加护栏测试；App 构造 Security 内部类型即 CS0122。
 - ❌ DeepSeek 是否接受 `?beta=true`、是否支持 `count_tokens`、错误体是否回显 Key——M1 验收时实测。
 - ❌ IHttpClientFactory 自带日志处理器是否给鉴权头打码——计划 S5 实测，默认行为未核实。
 

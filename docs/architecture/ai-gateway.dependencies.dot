@@ -44,6 +44,6 @@ digraph AiGatewayDeps {
     Lib -> Pkg [label="FORBIDDEN：AiGateway 引用 ProtectedData\n（加了也会因 net8.0 目标被 CA1416 拦）", color="#b91c1c", style=dashed, constraint=false];
     Sec -> Upstream [label="FORBIDDEN-09：Security 自己发请求\n不得用 HttpClient / IHttpClientFactory /\nSocketsHttpHandler / HttpClientHandler，\n不得构造 HttpRequestMessage", color="#b91c1c", style=dashed, constraint=false];
 
-    guard [label="护栏（全部在 AiGateway.Tests 一个文件里）\n① Lib 的 GetReferencedAssemblies() 不含 Security\n② 全 src 里 ProtectedData.Unprotect 恰好 1 处（在注入处理器）\n③ Security 源码里不出现发请求的类型（base.SendAsync 除外）\n④ IRealKeyVault 没有任何返回明文的成员\n其余边界靠 internal：App 只能看到两个注册方法", shape=note, style="rounded,filled", fillcolor="#fff4cc"];
+    guard [label="护栏（全部在 AiGateway.Tests 一个文件里）\n① AiGateway.csproj 无 Security 引用，且程序集元数据不引用它\n   （编译期另有两道：net8.0 引 net8.0-windows → NU1201；反向成环 → MSB4006）\n② 全 src 里 ProtectedData.Unprotect 恰好 1 处（在注入处理器）\n③ Security 源码里不出现发请求的类型（base.SendAsync 除外）\n④ IRealKeyVault 没有任何返回明文的成员\n其余边界靠 internal：App 只能看到两个注册方法（越界即 CS0122）", shape=note, style="rounded,filled", fillcolor="#fff4cc"];
     Tests -> guard [style=dotted, constraint=false];
 }

@@ -16,7 +16,7 @@ AiGateway.Tests ──► 以上全部（InternalsVisibleTo）
 
 | 边界 | 要拦住的错误 | 守法 |
 | --- | --- | --- |
-| AiGateway **不引用** Security | 网关 / 鉴权 / 日志代码拿到解密能力（FORBIDDEN-06/07） | 编译期：引用方向只有 Security → AiGateway |
+| AiGateway **不引用** Security | 网关 / 鉴权 / 日志代码拿到解密能力（FORBIDDEN-06/07） | 编译期**两道独立拦截**（S1 实测）：AiGateway 目标 `net8.0` 引用 `net8.0-windows` 的 Security 直接 **NU1201**；就算改了目标框架，Security → AiGateway 已存在，反向再加一条就是 **MSB4006 循环依赖**。护栏①测试是第三道 |
 | 只有 Security 引用 ProtectedData | 有人在别处直接调 DPAPI | 编译期：包引用；AiGateway 目标 `net8.0`，就算加了包，Windows 专属 API 也会触发 CA1416（警告即错误，S1 review 实测过这条） |
 | App 看不见两个库的内部类型 | UI 直接 `new` 出保护器或注入器（FORBIDDEN-03/08） | `internal` 默认 + 每个库只公开一个注册方法 |
 | 协议代码分不分程序集 | ——（入站只有一种协议，不存在两个 codec 互引） | 不拆 |
@@ -29,7 +29,7 @@ AiGateway.Tests ──► 以上全部（InternalsVisibleTo）
 
 | # | 断言 | 拦什么 |
 | --- | --- | --- |
-| ① | AiGateway 程序集的 `GetReferencedAssemblies()` 不含 `AiGateway.Security` | 有人给 AiGateway 加 Security 引用 |
+| ① | `src/AiGateway/AiGateway.csproj` 里没有指向 Security 的 `ProjectReference`；**且** AiGateway 程序集元数据不引用 Security | 有人给 AiGateway 加 Security 引用。**只查元数据不够**（S1 实测）：编译器会删掉没被代码用到的引用，"只加引用不写代码"时元数据检查仍是绿的，所以要同时查 csproj |
 | ② | 全 `src/` 里 `ProtectedData.Unprotect` 恰好出现 1 次，且在注入处理器 | 第二个解密点 |
 | ③ | `src/AiGateway.Security/` 源码里不出现 `HttpClient`、`IHttpClientFactory`、`SocketsHttpHandler`、`HttpClientHandler`、`new HttpRequestMessage`（`base.SendAsync` 除外） | 注入器自己发请求（FORBIDDEN-09） |
 | ④ | `IRealKeyVault` 的所有成员返回 `void` / `bool` / `Task` / `Task<bool>` | 只写端口被加上读方法（FORBIDDEN-10） |

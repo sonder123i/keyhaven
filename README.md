@@ -18,7 +18,7 @@ C# / .NET 8 WPF 桌面应用。Claude Code 把 `ANTHROPIC_BASE_URL` 指向本机
 | --- | --- |
 | 1–3 探索 / 澄清 / 架构 | ✅ **2026-10-15 review 后重写**（第一版出自上一个模型；为什么改见下文与 `evidence.md` §2） |
 | 4 实现计划 | ✅ **13 个故事**：`docs/plan/ai-gateway.implementation-plan.json`。M1 = S1–S8（DeepSeek 直通可用），M2 = S11–S12（OpenAI 翻译） |
-| 5 编码 | ⚠️ **仓库里现有的 10 项目骨架是旧架构，与文档不符**。下一步 = 新 S1：重做成 3 + 1 个项目 |
+| 5 编码 | 🟡 **S1 完成（2026-10-15）**：`src/AiGateway`（net8.0）· `src/AiGateway.Security`（net8.0-windows）· `src/AiGateway.App`（WPF）· `tests/AiGateway.Tests`，护栏①两条测试，红灯演示已实测（见计划 S1 的 demoBoundary）。还没有任何业务代码。**下一步 = S2**（配置存储 + DPAPI 只写密钥库） |
 
 ## 先读这些（按顺序）
 
@@ -65,6 +65,6 @@ C# / .NET 8 WPF 桌面应用。Claude Code 把 `ANTHROPIC_BASE_URL` 指向本机
 
 ## 仍然开着
 
-- `OPEN-11` 发布形态：依赖框架（目标机需装两个运行时）还是自包含（体积大）——S10 实测数字后由你选。
+- `OPEN-11` 发布形态：依赖框架还是自包含——S10 实测数字后由你选。已知（S1 实测 runtimeconfig）：App 需要 **3 个**共享框架（Microsoft.NETCore.App、WindowsDesktop.App、AspNetCore.App），依赖框架发布时目标机要装齐。
 - `OPEN-12` DeepSeek 是否接受 `?beta=true`、是否支持 `count_tokens`、错误体是否回显 Key——S8 实测。
 - `OPEN-13` IHttpClientFactory 自带日志处理器是否给鉴权头打码——S5 实测。

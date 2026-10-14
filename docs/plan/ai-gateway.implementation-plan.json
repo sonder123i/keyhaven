@@ -17,11 +17,11 @@
         "删掉现有 10 项目骨架；建 AiGateway（net8.0，FrameworkReference Microsoft.AspNetCore.App）、AiGateway.Security（net8.0-windows）、AiGateway.App（WinExe，WPF）、AiGateway.Tests（xUnit）",
         "引用只有三条：App → AiGateway、App → Security、Security → AiGateway；保留 .gitignore 负规则、MSBuildTreatWarningsAsErrors、eol=lf、global.json",
         "两个库默认 internal，各只公开一个注册方法（AddAiGateway / AddAiGatewaySecurity）；InternalsVisibleTo 测试项目",
-        "护栏测试①：AiGateway 的 GetReferencedAssemblies() 不含 AiGateway.Security；删除模板占位测试",
+        "护栏测试①：AiGateway.csproj 无 Security 引用 + AiGateway 程序集元数据不引用 Security（编译器会删掉未用到的引用，只查元数据不够）；删除模板占位测试",
         "验收：从 GitHub 新克隆一份构建 + 测试"
       ],
       "executionFit": "fits-one-run",
-      "demoBoundary": "fresh clone 构建 0 警告 0 错误、护栏①绿；手工给 AiGateway 加 Security 引用会让护栏①变红（随后撤销）",
+      "demoBoundary": "fresh clone 构建 0 警告 0 错误、护栏①绿。红灯演示（已于 2026-10-15 实测）：给 AiGateway 加 Security 引用 → 编译期 NU1201 / MSB4006 先拦下；强行把 AiGateway 改成 net8.0-windows 并反转引用 → 只加引用时 csproj 检查红、元数据检查绿，代码真用到时两条都红；App 构造 Security 内部类型 → CS0122",
       "scopeNotes": "纯骨架，不含业务类型。",
       "blockedBy": [],
       "techGuidance": "AiGateway 目标 net8.0 而非 net8.0-windows：这样它若误用 Windows 专属 API（包括 DPAPI）会被 CA1416 拦成编译错误。"

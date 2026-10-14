@@ -5,7 +5,7 @@
 *.csproj text
 *.props text
 *.targets text
-*.sln text
+*.sln text eol=crlf
 *.json text
 *.dot text
 *.dsl text
