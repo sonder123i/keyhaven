@@ -12,4 +12,11 @@ public static class AiGatewayServiceCollectionExtensions
         services.AddSingleton<ICiphertextStore>(sp => sp.GetRequiredService<ConfigStore>());
         return services;
     }
+
+    internal static IServiceCollection AddGatewayCore(this IServiceCollection services, ConfigStore store)
+    {
+        services.AddSingleton(store);
+        services.AddSingleton<ICiphertextStore>(store);
+        return services;
+    }
 }

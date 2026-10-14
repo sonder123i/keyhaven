@@ -118,11 +118,12 @@
     {
       "id": "S7",
       "title": "最小 UI：Provider 与 Key、代理密钥、一键切换",
-      "covers": ["D5", "D8", "FORBIDDEN-03", "RISK-07"],
+      "covers": ["D5", "D8", "D9", "FORBIDDEN-03", "RISK-07"],
       "tasks": [
         "Provider 页：增删改（名称、上游类型、BaseUrl、模型名）；录入 Key 经 IRealKeyVault，录完立即清空输入框",
         "代理密钥页：生成（明文只显示一次 + 一键复制 Claude Code 配置片段：ANTHROPIC_BASE_URL 与 ANTHROPIC_AUTH_TOKEN）；列表只显示指纹；启用 / 吊销",
         "一键切换：选 Provider + 模型 → 替换激活快照并写配置",
+        "端口设置（D9 唯一可改的监听项）：显示当前端口，可改，保存后提示重启生效；S3 的端口被占提示改为指向这里",
         "ViewModel 不持有 Key 字符串字段；文案按\"可吊销的访问凭证\"写，不写成\"安全加密\""
       ],
       "executionFit": "fits-one-run",

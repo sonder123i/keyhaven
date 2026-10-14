@@ -15,7 +15,7 @@ digraph AiGatewayDeps {
 
     App [label="AiGateway.App（WinExe, net8.0-windows, WPF）\n组合根 · 托盘 · 四类页面 · ViewModels\n调用 AddAiGateway() + AddAiGatewaySecurity()", fillcolor="#e6edf7"];
 
-    Lib [label="AiGateway（classlib, net8.0）\n入口 · 代理密钥验证 · 激活快照 · 路由\n直通转发 · 翻译(M2) · 上游客户端 · 配置存储 · 运行日志\n对外只公开 AddAiGateway()、IRealKeyVault（只写）、ICiphertextStore（只存取密文），其余 internal", fillcolor="#dfeaf7"];
+    Lib [label="AiGateway（classlib, net8.0）\n入口 · 代理密钥验证 · 激活快照 · 路由\n直通转发 · 翻译(M2) · 上游客户端 · 配置存储 · 运行日志\n对外只公开 AddAiGateway()、GatewayServer（宿主入口）、IRealKeyVault（只写）、ICiphertextStore（只存取密文），其余 internal", fillcolor="#dfeaf7"];
 
     Sec [label="AiGateway.Security（classlib, net8.0-windows）\nDPAPI 保护器 · 只写密钥库(IRealKeyVault 实现)\n真实密钥注入处理器(DelegatingHandler)\n对外只公开 AddAiGatewaySecurity()，其余 internal", fillcolor="#f7dada"];
 

@@ -9,6 +9,14 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WPF and WinForms both define Application/MessageBox; keep WinForms out of the global usings and import it only where the tray icon needs it. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+    <InternalsVisibleTo Include="AiGateway.Tests" />
+  </ItemGroup>
 
 </Project>

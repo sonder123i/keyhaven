@@ -18,7 +18,7 @@ C# / .NET 8 WPF 桌面应用。Claude Code 把 `ANTHROPIC_BASE_URL` 指向本机
 | --- | --- |
 | 1–3 探索 / 澄清 / 架构 | ✅ **2026-10-15 review 后重写**（第一版出自上一个模型；为什么改见下文与 `evidence.md` §2） |
 | 4 实现计划 | ✅ **13 个故事**：`docs/plan/ai-gateway.implementation-plan.json`。M1 = S1–S8（DeepSeek 直通可用），M2 = S11–S12（OpenAI 翻译） |
-| 5 编码 | 🟡 **S1、S2 完成（2026-10-15）**：3 + 1 个项目骨架；`config.json`（`%LOCALAPPDATA%\AiGateway\`，snake_case，原子写，内存快照）+ DPAPI 只写密钥库（`protector_id` / `key_version` 已落盘）；护栏①②④ 与红灯演示已实测，18 个测试全绿。还没有 HTTP 端点。**下一步 = S3**（宿主：Kestrel + 端口 + /health + 单实例 + 托盘） |
+| 5 编码 | 🟡 **S1–S3 完成（2026-10-15）**：3 + 1 个项目；`config.json` + DPAPI 只写密钥库；**网关能启动了**：`GatewayServer` 只监听 `127.0.0.1:8000`（空宿主构建器，环境变量加不出别的监听）、`GET /health`、端口被占给出可读提示、单实例、关窗隐藏到托盘。24 个测试全绿；真实 exe 已演示启动 / 关窗 / 第二实例被挡。**待你手动验证一项**：右键托盘图标 →「退出」后端口释放。还没有鉴权与转发。**下一步 = S4**（代理密钥：生成、哈希、内存快照鉴权、吊销） |
 
 ## 先读这些（按顺序）
 
