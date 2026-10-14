@@ -1,11 +1,11 @@
-workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关 —— target-state（尚无业务代码）。2026-10-15 按 review 决策重写：只收 Anthropic 入站；出站分直通（Anthropic 兼容上游）与翻译（OpenAI，第二里程碑）；JSON 配置；3 个产品程序集 + 1 个测试项目。" {
+workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关。M1（直通 DeepSeek）已于 2026-10-15 用真 Claude Code 验收；翻译路径与运行日志尚未实现。2026-10-15 按 review 决策重写：只收 Anthropic 入站；出站分直通（Anthropic 兼容上游）与翻译（OpenAI，第二里程碑）；JSON 配置；3 个产品程序集 + 1 个测试项目。" {
 
     !identifiers hierarchical
 
     model {
         operator = person "桌面操作者" "录入上游 Key、生成 / 吊销代理密钥、一键切换当前模型、看运行日志。"
 
-        claudeCode = softwareSystem "Claude Code CLI" "唯一入站客户端，只说 Anthropic Messages 协议。ANTHROPIC_BASE_URL=http://127.0.0.1:端口号，ANTHROPIC_AUTH_TOKEN=代理密钥。推理请求发往 /v1/messages?beta=true，带 anthropic-version / anthropic-beta 头；count_tokens 缺失时自行按字符估算。" {
+        claudeCode = softwareSystem "Claude Code CLI" "唯一入站客户端，只说 Anthropic Messages 协议。ANTHROPIC_BASE_URL=http://127.0.0.1:端口号，ANTHROPIC_AUTH_TOKEN=代理密钥。推理请求发往 /v1/messages?beta=true，带 anthropic-version / anthropic-beta 头；count_tokens 缺失时自行按字符估算（S8 实测 2.1.300 从未调用它）。对 5xx 与 401 会重试约 3 分钟才显示错误，除非响应带 x-should-retry: false（S8 实测）。" {
             tags "External,InboundClient"
         }
         localUntrusted = softwareSystem "本机不受信来源" "浏览器里的任意网页（含 DNS rebinding）与其他本机程序。监听写死 127.0.0.1 挡不住它们 —— 这正是代理密钥鉴权的防御职责（D6）。" {
@@ -30,7 +30,7 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关 —— 
                 httpEndpoints = component "本地 HTTP 入口" "[AiGateway] POST /v1/messages（含 ?beta=true 查询串）、POST /v1/messages/count_tokens、GET /health。地址写死 127.0.0.1，只有端口可改（D9）。" "ASP.NET Core Minimal API" {
                     tags "Lib"
                 }
-                proxyKeyAuthenticator = component "代理密钥验证器" "[AiGateway] 从 x-api-key 或 Authorization: Bearer 取代理密钥，SHA-256 后与已启用哈希的内存快照做 FixedTimeEquals（D8/D10）。快照随配置写入整体替换，吊销即刻生效，不每请求读盘。失败回 Anthropic 形状 401。" "SHA-256 + FixedTimeEquals" {
+                proxyKeyAuthenticator = component "代理密钥验证器" "[AiGateway] 从 x-api-key 或 Authorization: Bearer 取代理密钥，SHA-256 后与已启用哈希的内存快照做 FixedTimeEquals（D8/D10）。快照随配置写入整体替换，吊销即刻生效，不每请求读盘。失败回 Anthropic 形状 401，并带 x-should-retry: false（被吊销的密钥不会自己变好）。" "SHA-256 + FixedTimeEquals" {
                     tags "Lib"
                 }
                 activationState = component "激活快照" "[AiGateway] 当前激活的 (Provider, 上游类型, BaseUrl, 真实模型名)。不另起数据：就是配置快照 ConfigStore.Current 里的激活项，切换即整体替换配置快照（D7：路由唯一来源）；路由每次只读一份快照，不会读到半新半旧。" "ConfigStore.Current（不可变 record，Volatile 替换）" {
@@ -39,7 +39,7 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关 —— 
                 routeResolver = component "路由解析" "[AiGateway] 读激活快照，决定走直通还是翻译、真实模型名是什么。不读代理密钥的任何属性。" "C#" {
                     tags "Lib"
                 }
-                passthroughForwarder = component "直通转发器" "[AiGateway] 上游原生说 Anthropic 协议时使用（Anthropic、DeepSeek /anthropic）。请求体只改顶层 model 字段，其余语义不变（thinking、cache_control、中文原样）；请求头白名单转发 anthropic-*、accept、user-agent，保留原查询串；响应状态码与白名单头（content-type、retry-after、request-id、anthropic-*）原样，SSE 字节逐块回流；客户端中止即取消上游。失败映射为 Anthropic 形状错误：无激活 503、OpenAI 上游 501、非 JSON 400、上游不可达 502、Key 在当前账户下解不开 503 并提示重新录入。" "JsonNode 单字段改写 + 流式复制" {
+                passthroughForwarder = component "直通转发器" "[AiGateway] 上游原生说 Anthropic 协议时使用（Anthropic、DeepSeek /anthropic）。请求体只改顶层 model 字段，其余语义不变（thinking、cache_control、中文原样）；请求头白名单转发 anthropic-*、accept、user-agent，保留原查询串；响应状态码与白名单头（content-type、retry-after、request-id、x-should-retry、anthropic-*）原样，SSE 字节逐块回流；客户端中止即取消上游。失败映射为 Anthropic 形状错误：无激活 503、OpenAI 上游 501、非 JSON 400、上游不可达 502、Key 在当前账户下解不开 503 并提示重新录入；这些网关自己的配置类错误都带 x-should-retry: false，上游 401 没给提示时也补上，上游不可达的 502 仍可重试（S8）。" "JsonNode 单字段改写 + 流式复制" {
                     tags "Lib"
                 }
                 translator = component "Anthropic → OpenAI 翻译器" "[AiGateway] 上游只说 chat/completions 时使用（第二里程碑）。请求翻译（带 stream_options.include_usage）；流式把 OpenAI chunk 重编码为 Anthropic 事件序列并合成 usage；按 D4 只保证 tool_use，thinking 在这条路上丢弃。无状态单例，每请求状态放在上下文对象里。" "System.Text.Json" {
@@ -74,7 +74,7 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关 —— 
         dpapi = softwareSystem "Windows DPAPI" "OS 用户主密钥体系。防其他 Windows 用户与离线拿走硬盘；防不住以本人身份运行的恶意程序（它能直接调解密）。换机、换账户、重置密码后密文可能不可读。" {
             tags "External,OsCapability"
         }
-        anthropicApi = softwareSystem "Anthropic 兼容上游" "原生说 Messages 协议的上游：api.anthropic.com、https://api.deepseek.com/anthropic 等。DeepSeek 支持 thinking / tools / 图片，忽略 anthropic-beta 与 cache_control，未知模型名映射到默认模型。" {
+        anthropicApi = softwareSystem "Anthropic 兼容上游" "原生说 Messages 协议的上游：api.anthropic.com、https://api.deepseek.com/anthropic 等。DeepSeek 现用模型名 deepseek-flash 与 deepseek-v4-pro；支持 thinking / tools / 图片 / count_tokens，接受 ?beta=true，忽略 anthropic-beta 与 cache_control，未知模型名映射到 deepseek-flash；Key 错误时错误体只回显末 4 位（S8 实测）。" {
             tags "External,Upstream"
         }
         openAiApi = softwareSystem "OpenAI Chat 上游" "只说 /v1/chat/completions 的上游（api.openai.com 等），需要翻译。第二里程碑。" {

@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -18,7 +19,7 @@ internal sealed class PassthroughForwarder(RouteResolver resolver, IHttpClientFa
     // Relaxed escaping keeps non-ASCII text (e.g. Chinese prompts) as-is instead of \uXXXX, so the body stays close to the original.
     private static readonly JsonSerializerOptions BodyJson = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
-    private static readonly string[] ForwardedResponseHeaders = ["content-type", "retry-after", "request-id"];
+    private static readonly string[] ForwardedResponseHeaders = ["content-type", "retry-after", "request-id", "x-should-retry"];
 
     public async Task ForwardAsync(HttpContext context)
     {
@@ -65,7 +66,7 @@ internal sealed class PassthroughForwarder(RouteResolver resolver, IHttpClientFa
         }
         catch (HttpRequestException)
         {
-            await Fail(context, StatusCodes.Status502BadGateway, "api_error", $"Could not reach the upstream at {route.BaseUrl.Host}.");
+            await Fail(context, StatusCodes.Status502BadGateway, "api_error", $"Could not reach the upstream at {route.BaseUrl.Host}.", retryable: true);
             return;
         }
 
@@ -78,6 +79,12 @@ internal sealed class PassthroughForwarder(RouteResolver resolver, IHttpClientFa
                 {
                     context.Response.Headers[name] = new StringValues(values.ToArray());
                 }
+            }
+
+            // An upstream 401 means the stored key is wrong; retrying cannot fix that, unless the upstream itself says otherwise.
+            if (response.StatusCode == HttpStatusCode.Unauthorized && !context.Response.Headers.ContainsKey("x-should-retry"))
+            {
+                context.Response.Headers["x-should-retry"] = "false";
             }
 
             try
@@ -153,6 +160,15 @@ internal sealed class PassthroughForwarder(RouteResolver resolver, IHttpClientFa
         }
     }
 
-    private static Task Fail(HttpContext context, int statusCode, string type, string message) =>
-        AnthropicErrors.Create(statusCode, type, message).ExecuteAsync(context);
+    // Claude Code retries 5xx for about three minutes before showing anything (S8 measured 174 s); a gateway
+    // configuration problem is not transient, so say so and let the message reach the user at once.
+    private static Task Fail(HttpContext context, int statusCode, string type, string message, bool retryable = false)
+    {
+        if (!retryable)
+        {
+            context.Response.Headers["x-should-retry"] = "false";
+        }
+
+        return AnthropicErrors.Create(statusCode, type, message).ExecuteAsync(context);
+    }
 }

@@ -66,6 +66,8 @@ public sealed class GatewayServer : IAsyncDisposable
         var authenticator = context.RequestServices.GetRequiredService<ProxyKeyAuthenticator>();
         if (!authenticator.IsAuthorized(ProxyKeyAuthenticator.ReadPresentedKey(context.Request)))
         {
+            // Claude Code retries 401 for about three minutes too; a revoked key never becomes valid again.
+            context.Response.Headers["x-should-retry"] = "false";
             await AnthropicErrors
                 .Create(StatusCodes.Status401Unauthorized, "authentication_error", "Missing, unknown or revoked proxy key.")
                 .ExecuteAsync(context);

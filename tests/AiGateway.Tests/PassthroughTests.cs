@@ -162,6 +162,7 @@ public class PassthroughTests
         {
             context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
             context.Response.Headers.RetryAfter = "7";
+            context.Response.Headers["x-should-retry"] = "true";
             context.Response.ContentType = "application/json";
             await context.Response.WriteAsync(upstreamError);
         });
@@ -170,8 +171,32 @@ public class PassthroughTests
 
         Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
         Assert.Equal("7", response.Headers.RetryAfter?.ToString());
+        Assert.Equal("true", ShouldRetry(response));
         Assert.Equal(upstreamError, await response.Content.ReadAsStringAsync());
         Assert.Single(gw.Upstream.Requests);
+    }
+
+    [Theory]
+    [InlineData(null, "false")]
+    [InlineData("true", "true")]
+    public async Task Upstream_401_is_not_retried_unless_the_upstream_says_so(string? upstreamHint, string expected)
+    {
+        await using var gw = await GatewayHarness.StartAsync(async context =>
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            if (upstreamHint is not null)
+            {
+                context.Response.Headers["x-should-retry"] = upstreamHint;
+            }
+
+            await context.Response.WriteAsync("""{"error":{"message":"Your api key: ****ECHO is invalid","type":"authentication_error"}}""");
+        });
+
+        using var response = await gw.Client.SendAsync(gw.Messages(Body));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(expected, ShouldRetry(response));
+        Assert.Contains("****ECHO", await response.Content.ReadAsStringAsync());
     }
 
     [Fact]
@@ -249,6 +274,7 @@ public class PassthroughTests
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.Equal("api_error", (await ReadError(response)).Type);
+        Assert.Equal("false", ShouldRetry(response));
         Assert.Empty(gw.Upstream.Requests);
     }
 
@@ -260,6 +286,7 @@ public class PassthroughTests
         using var response = await gw.Client.SendAsync(gw.Messages(Body));
 
         Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode);
+        Assert.Equal("false", ShouldRetry(response));
         Assert.Empty(gw.Upstream.Requests);
     }
 
@@ -273,6 +300,7 @@ public class PassthroughTests
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.Contains("cannot be decrypted", (await ReadError(response)).Message);
+        Assert.Equal("false", ShouldRetry(response));
         Assert.Empty(gw.Upstream.Requests);
     }
 
@@ -285,6 +313,7 @@ public class PassthroughTests
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("invalid_request_error", (await ReadError(response)).Type);
+        Assert.Equal("false", ShouldRetry(response));
         Assert.Empty(gw.Upstream.Requests);
     }
 
@@ -297,8 +326,13 @@ public class PassthroughTests
         using var response = await gw.Client.SendAsync(gw.Messages(Body));
 
         Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        Assert.Null(ShouldRetry(response));
         Assert.DoesNotContain(GatewayHarness.RealKey, await response.Content.ReadAsStringAsync());
         gw.Client.Dispose();
         await gw.Server.DisposeAsync();
     }
+
+    // Claude Code retries 5xx for minutes unless told not to; the gateway's own configuration errors are not transient.
+    private static string? ShouldRetry(HttpResponseMessage response) =>
+        response.Headers.TryGetValues("x-should-retry", out var values) ? string.Join(",", values) : null;
 }

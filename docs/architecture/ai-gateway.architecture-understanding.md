@@ -2,7 +2,7 @@
 
 - **版本**：2026-10-15 修订版。第一版由上一个模型在 2026-10-14 产出；本版按 2026-10-15 的 review 与你当场选定的四项决策重写。旧版全文在 git `cc01023`。
 - **真相源**：`ai-gateway.structurizr.dsl`（**已用 Structurizr CLI v2025.11.09 解析通过并导出三视图**；旧版在第 229 行就解析失败，从未能打开过）。
-- **状态**：target-state，尚无业务代码。
+- **状态**：**M1 已达成（2026-10-15，计划 S1–S8）**：真 Claude Code 经网关直通 DeepSeek，对话、工具调用、thinking、图片、中止、一键切换、吊销都已实测，记录见 `evidence.md` §7。翻译（M2）与运行日志页尚未实现。
 - **一句话范围**：Claude Code 指向本机 `127.0.0.1:端口`；网关验代理密钥，把请求交给当前激活的上游——上游原生说 Anthropic 协议就**直通**，只说 OpenAI 协议就**翻译**；真实 Key 只以 DPAPI 密文存在本机 JSON 里。
 
 ## 1. 决策基线
@@ -53,6 +53,8 @@
 | `/v1/messages/count_tokens` **可选**，缺失时 Claude Code "fall back to a character-based estimate" | 同上 | 关闭 OPEN-04；旧 RISK-04 的"缺了就报错"是错的 |
 | `ANTHROPIC_AUTH_TOKEN` → `Authorization`；`ANTHROPIC_API_KEY` → `x-api-key` | 同上 | 鉴权两种头都要认 |
 | DeepSeek 提供 `https://api.deepseek.com/anthropic`：支持 thinking / tools / tool_choice / 图片；忽略 `anthropic-beta`、`cache_control`；未知模型名映射到默认模型 | https://api-docs.deepseek.com/guides/anthropic_api | M1 可以零翻译 |
+| DeepSeek 现在的模型名是 `deepseek-flash` 与 `deepseek-v4-pro`（S8 当天核实；旧名 `deepseek-chat` / `deepseek-reasoner` 已过时） | https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code | 上游配置里填这两个名字 |
+| Claude Code 对 5xx 与 401 会重试约 3 分钟才显示错误，除非响应带 `x-should-retry: false` | 本机实测（`evidence.md` §7） | 网关自己的配置类错误都要带这个头，否则配错时要干等 3 分钟 |
 | 同类项目 cc-switch（14.4 万星，Windows 原生）已有本机路由、格式转换、占位密钥、热切换、故障转移；claude-code-router（3.8 万星）专做协议翻译 | https://github.com/farion1231/cc-switch （README 第 344、363、484 行）· https://github.com/musistudio/claude-code-router | 本项目的差异只剩脊柱②（密钥安全）与极简，力气应花在那里 |
 
 ⚠️ 上表前四行来自对官方页面的抓取摘要，不是逐字引文；要核对就打开第一个网址看 "endpoints" 与 "headers" 两节。cc-switch 是否加密存 Key、它的本机路由校不校验占位密钥，**都未核实**（README 没写，要看其源码与 `docs/user-manual/en/4-proxy/`）。
@@ -107,7 +109,9 @@
 - ✅ DSL 解析通过并导出 L1/L2/L3（Structurizr CLI v2025.11.09）；两张 DOT 实渲无报错（Graphviz 16.1.0）。
 - ✅ 外部事实见 §3（附网址）。
 - ✅ 骨架已按 D11 重做为 3 + 1 个项目（计划 S1）：AiGateway 碰不到 Security 有编译期两道拦截（NU1201、MSB4006）加护栏测试；App 构造 Security 内部类型即 CS0122。
-- ❌ DeepSeek 是否接受 `?beta=true`、是否支持 `count_tokens`、错误体是否回显 Key——M1 验收时实测。
+- ✅ DeepSeek 接受 `?beta=true`、支持 `count_tokens`（Claude Code 实际没调用过）、Key 错误时只回显末 4 位（S8 实测，`evidence.md` §7）。
+- ✅ 真 Claude Code 2.1.300 经网关直通 DeepSeek：对话、工具调用、thinking、图片、中止、一键切换、吊销后立即 401（S8）。
+- ❌ 交互式会话（Esc / Ctrl+C、长会话的上下文压缩）没有自动化覆盖，需要你在自己的终端里用一次。
 - ✅ IHttpClientFactory 自带日志**不**给鉴权头打码，`RedactLoggedHeaders` 也只管格式化文本、结构化字段仍是明文（S5 实测）⇒ 上游客户端拿掉全部内置日志处理器，并禁止自动跟随重定向。
 
 ## 8. 维护约定

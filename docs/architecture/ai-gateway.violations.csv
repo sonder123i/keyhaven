@@ -13,14 +13,15 @@ RISK-05,MEDIUM,AiGateway（翻译器）,每请求缓冲,lifetime,翻译器若用
 RISK-06,MEDIUM,AiGateway（直通与翻译）,上游请求,cancellation,客户端中止没传到上游会泄漏连接并让上游继续计费,集成测试：客户端中途挂断后断言桩上游观察到取消（S6；红灯实测——不传 RequestAborted 即红；进程外演示 1.2 秒掐断上游同刻收到取消）,high,直通已落地；翻译路径 M2 再覆盖
 RISK-07,MEDIUM,AiGateway.App,WPF Dispatcher,threading,请求线程回调 Dispatcher 会与 Kestrel 死锁,结构性杜绝：请求路径代码都在 AiGateway（net8.0，不引用 WPF），编译期就拿不到 Dispatcher,high,S3 确认
 RISK-08,HIGH,本机不受信来源（浏览器网页 / DNS rebinding / 其他程序）,127.0.0.1 监听端口,network,写死回环挡不住本机浏览器里的网页；没有鉴权就能被网页借用上游额度,D6 代理密钥鉴权：除 /health 外一律先验密钥，未知路径也一样（不暴露哪些路径存在）；测试覆盖无密钥 / 伪造密钥 / 吊销后,medium,S4 落地；2026-10-15 更正旧版"回环无攻击面"的理由；替代旧 RISK-02（旧表里 RISK-02 出现了两行重复 ID）
-RISK-09,HIGH,AiGateway（直通转发器）,Anthropic 兼容上游,protocol-fidelity,官方网关协议要求转发 anthropic-version（去掉会坏）与 anthropic-beta（去掉可能 400）；Claude Code 请求带 ?beta=true,集成测试（桩上游）断言头与查询串原样到达 + M1 真客户端验收,high,S6 桩上游已验证（anthropic-* 白名单转发、?beta=true 保留）；真 Claude Code 验收在 S8。来源 https://code.claude.com/docs/en/llm-gateway-protocol
+RISK-09,HIGH,AiGateway（直通转发器）,Anthropic 兼容上游,protocol-fidelity,官方网关协议要求转发 anthropic-version（去掉会坏）与 anthropic-beta（去掉可能 400）；Claude Code 请求带 ?beta=true,集成测试（桩上游）断言头与查询串原样到达 + M1 真客户端验收,high,S6 桩上游已验证（anthropic-* 白名单转发、?beta=true 保留）；S8 真 Claude Code 2.1.300 → DeepSeek 全部通过（evidence.md §7）。来源 https://code.claude.com/docs/en/llm-gateway-protocol
 RISK-10,MEDIUM,用户关窗,Kestrel,availability,同进程（D3）下关掉主窗口即停代理，Claude Code 立刻报错,托盘常驻：关窗只隐藏，托盘菜单才退出（计划 S3）,high,review 补
 RISK-11,CLOSED,IHttpClientFactory 自带日志处理器,鉴权头,data-leak,S5 实测：默认在 Trace 级原样记录请求头（x-api-key: 真实 Key）；RedactLoggedHeaders 只给格式化文本打码，结构化字段里仍是明文，JSON / Serilog 等结构化输出会照写,上游命名客户端 RemoveAllLoggers() + 护栏⑦（抓取器先证明自己在工作，再断言零条上游客户端日志且全部日志含结构化字段都搜不到 Key）,high,OPEN-13 已关闭；红灯实测：去掉 RemoveAllLoggers 即红
 RISK-14,HIGH,上游重定向,别的主机,data-leak,x-api-key 是自定义头；HttpClient 跟随重定向时会把它带到 Location 指向的主机,上游客户端 AllowAutoRedirect=false + 护栏⑧（302 原样交回，另一台主机收不到请求）,high,S5 新增；红灯实测：允许重定向即红
-RISK-12,LOW,上游错误体,入站响应,data-leak,直通原样透传上游错误体；若上游回显完整 Key 就会泄到客户端,M1 验收实测（计划 S8）,low,主流上游只回显打码片段，未逐家核实（OPEN-12）
+RISK-12,CLOSED,上游错误体,入站响应,data-leak,直通原样透传上游错误体；若上游回显完整 Key 就会泄到客户端,S8 实测 DeepSeek：合法 Key 时的错误体（422）无任何 Key 片段；Key 错误时 401 只回显末 4 位（****XXXX）,high,OPEN-12 已关闭；最多泄露末 4 位，且只在存的 Key 本身就错时
 RISK-13,HIGH,环境变量 / appsettings,Kestrel 监听地址,binding-scope,默认宿主构建器会读 ASPNETCORE_URLS 与 Kestrel__Endpoints__* 并追加监听，悄悄打开 0.0.0.0，D9 失效,宿主用 WebApplication.CreateEmptyBuilder（不读任何配置源）+ 护栏⑥测试,high,S3 红灯实测：换回 CreateBuilder() 后环境变量真的多开了 0.0.0.0 监听
 RISK-15,HIGH,上游配置,上游 API,data-leak,上游地址填成 http 时，注入的真实 Key 会以明文走网络,保存上游时只有回环地址（本机桩 / 本机代理）允许 http，其余必须 https；设置层与 ViewModel 各有测试,high,S7 新增；红灯实测：去掉这条校验即红
 RISK-16,MEDIUM,确认框,吊销代理密钥 / 删除上游与 Key,usability,WPF MessageBox 默认按钮是「是」，误按回车就执行了不可逆操作,删除 / 吊销确认框显式默认「否」；真 exe 实测 DM_GETDEFID 改前 6、改后 7,medium,S7 新增；MessageBox 无法单元测试，靠代码审查 + 实测
+RISK-17,MEDIUM,网关与上游的错误响应,Claude Code 的重试逻辑,availability,Claude Code 对 5xx 与 401 重试约 3 分钟（10 次）才显示错误；没激活上游、存的 Key 错、代理密钥被吊销这类配置问题会让用户干等 3 分钟,网关自己的配置类错误（503 / 501 / 400）与代理密钥 401 带 x-should-retry: false；上游 401 没给提示时补 false；该头进响应头白名单；上游不可达 502 仍可重试。测试逐条断言,high,S8 用真 Claude Code 发现：修复前 174 秒 / 178 秒，修复后 1 次请求 2–3 秒；红灯：新断言在修复前全红
 DECIDED-01,HIGH,AiGateway（代理密钥验证器）,已启用哈希的内存快照,correctness,吊销要即刻生效；同进程下写配置的同时整体替换内存快照即可，不必每请求读盘,护栏⑤：吊销后下一个请求必须 401（S4 落地：快照就是 ConfigStore.Current，写入即替换；红灯实测——给鉴权加一次性缓存后该测试变红）,high,2026-10-15 修订：原"每请求现查库、不加缓存"的前提（写入方在别处）在 D3 下不成立
 FORBIDDEN-01,RETIRED,Mapping.Anthropic,Mapping.OpenAI,compile-time,两个 codec 互引,—,—,D1 修订后只有一个翻译器，规则不再有对象
 FORBIDDEN-02,RETIRED,AiGateway.Core,其他程序集,compile-time,内核反向依赖,—,—,D11 后没有 Core 程序集

@@ -145,8 +145,8 @@
         "结论写回 README 与 violations.csv"
       ],
       "executionFit": "fits-one-run",
-      "demoBoundary": "一份实测记录：每一项给出命令、现象、结论；失败项附原始报错",
-      "scopeNotes": "这是 M1 的唯一验收口径：直通的错误只在真客户端上暴露。",
+      "demoBoundary": "已于 2026-10-15 完成，记录见 evidence.md §7：Claude Code 2.1.300 经网关直通 DeepSeek，普通对话、工具调用读写文件、thinking、图片、中止、一键切换到 deepseek-v4-pro、吊销后下一个请求 401 全部通过；DeepSeek 接受 ?beta=true、支持 count_tokens（Claude Code 没调用过）、Key 错误时只回显末 4 位",
+      "scopeNotes": "这是 M1 的唯一验收口径：直通的错误只在真客户端上暴露。实测果然暴露了一个：Claude Code 对 5xx 与 401 重试约 3 分钟才显示错误（没激活上游 174 秒、存的 Key 错 178 秒）。我在本故事里顺手修了（RISK-17：网关自己的配置类错误与代理密钥 401 带 x-should-retry: false，上游 401 没给提示时补 false；测试先红后绿），这是我的判断，可推翻。另：DeepSeek 已改模型名为 deepseek-flash / deepseek-v4-pro。未覆盖：交互式会话（Esc / Ctrl+C、上下文压缩）要你自己用一次。",
       "blockedBy": ["S6", "S7"],
       "techGuidance": null
     },

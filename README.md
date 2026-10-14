@@ -18,7 +18,7 @@ C# / .NET 8 WPF 桌面应用。Claude Code 把 `ANTHROPIC_BASE_URL` 指向本机
 | --- | --- |
 | 1–3 探索 / 澄清 / 架构 | ✅ **2026-10-15 review 后重写**（第一版出自上一个模型；为什么改见下文与 `evidence.md` §2） |
 | 4 实现计划 | ✅ **13 个故事**：`docs/plan/ai-gateway.implementation-plan.json`。M1 = S1–S8（DeepSeek 直通可用），M2 = S11–S12（OpenAI 翻译） |
-| 5 编码 | 🟡 **S1–S7 完成（2026-10-15）**：3 + 1 个项目；`config.json` + DPAPI 只写密钥库；网关宿主（只监听 `127.0.0.1`、单实例、托盘常驻）；代理密钥（签发 / 鉴权 / 即刻吊销）；路由与真实 Key 注入（不跟随重定向、上游客户端零日志、发完即删）；**直通转发**（只改 `model`、头白名单、SSE 真流式、中止传播、上游错误原样透传）；**最小 UI**：顶栏一键切换 + 上游与 Key / 代理密钥 / 设置三页，Key 只经输入框交给只写库、交完即清空，代理密钥明文只在一次性窗口里出现并附可复制的 Claude Code 配置片段，本机以外的上游必须 https，端口被占时提议改用空闲端口。真 exe 用 UI 自动化走通全程（桩上游收到真实 Key、换好的模型；吊销后 401）。91 个测试全绿。S7 有 4 处实现期判断是我做的，见计划 S7 的 scopeNotes，可推翻。**下一步 = S8**（M1 验收：真 Claude Code → 网关 → DeepSeek，需要你的 DeepSeek Key） |
+| 5 编码 | 🟢 **M1 达成：S1–S8 完成（2026-10-15）**。真 Claude Code 2.1.300 经网关直通 DeepSeek：对话、工具调用、thinking、图片、中止、一键切换、吊销后立即 401 全部实测通过（记录：`evidence.md` §7）。已有：3 + 1 个项目；`config.json` + DPAPI 只写密钥库；只监听 `127.0.0.1` 的宿主（单实例、托盘常驻）；代理密钥（签发 / 鉴权 / 即刻吊销）；真实 Key 注入（不跟随重定向、零日志、发完即删）；直通转发（只改 `model`、头白名单、真流式、中止传播）；最小 UI（上游与 Key / 代理密钥 / 设置 + 顶栏一键切换）。S8 实测发现 Claude Code 对 5xx 与 401 会重试约 3 分钟，已让网关的配置类错误带 `x-should-retry: false`（RISK-17）。93 个测试全绿。**下一步 = S9**（运行日志页） |
 
 ## 先读这些（按顺序）
 
@@ -60,10 +60,11 @@ C# / .NET 8 WPF 桌面应用。Claude Code 把 `ANTHROPIC_BASE_URL` 指向本机
 - 校验 DSL：`gh release download v2025.11.09 -R structurizr/cli -p structurizr-cli.zip`，解压后
   `java -cp "cli/lib/*" com.structurizr.cli.StructurizrCliApplication validate -workspace docs/architecture/ai-gateway.structurizr.dsl`
   （本机 JDK 25 可跑；CLI 94MB，用完即删，不进仓库）。DSL 描述里别写尖括号（`<port>` 这类会让导出的 DOT 渲染失败）。
-- **本机没有 Claude Code**：M1 验收（S8）前要 `npm i -g @anthropic-ai/claude-code`，并需要你的 DeepSeek Key。
+- **Claude Code 2.1.300 已用 npm 全局装好**。接网关：在网关的「代理密钥」页生成一把，把弹出的配置片段合并进 `~/.claude/settings.json`；DeepSeek 上游的地址填 `https://api.deepseek.com/anthropic`，模型填 `deepseek-flash, deepseek-v4-pro`（DeepSeek 已改名，旧的 `deepseek-chat` / `deepseek-reasoner` 别再用）。
 - C 盘 90% 满（剩约 26G）；E 盘充裕。
 
 ## 仍然开着
 
 - `OPEN-11` 发布形态：依赖框架还是自包含——S10 实测数字后由你选。已知（S1 实测 runtimeconfig）：App 需要 **3 个**共享框架（Microsoft.NETCore.App、WindowsDesktop.App、AspNetCore.App），依赖框架发布时目标机要装齐。
-- `OPEN-12` DeepSeek 是否接受 `?beta=true`、是否支持 `count_tokens`、错误体是否回显 Key——S8 实测。
+- 交互式会话（Esc / Ctrl+C 中止、长会话的上下文压缩）没有自动化覆盖——S8 只能用 `-p` 模式跑，需要你自己用一次。
+- 仓库原定 M1 跑通后再考虑公开；M1 已达成，公不公开、什么时候公开由你定（目前仍是 private）。

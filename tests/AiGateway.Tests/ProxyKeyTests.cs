@@ -98,7 +98,9 @@ public sealed class ProxyKeyTests : IAsyncLifetime
 
         Assert.True(Registry.Revoke(key.Id));
 
-        Assert.Equal(HttpStatusCode.Unauthorized, (await PostMessages(h => h.Add("x-api-key", key.Plaintext))).StatusCode);
+        var rejected = await PostMessages(h => h.Add("x-api-key", key.Plaintext));
+        Assert.Equal(HttpStatusCode.Unauthorized, rejected.StatusCode);
+        Assert.Equal("false", string.Join(",", rejected.Headers.TryGetValues("x-should-retry", out var hint) ? hint : []));
     }
 
     [Fact]
