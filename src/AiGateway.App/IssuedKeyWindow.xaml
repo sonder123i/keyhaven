@@ -1,0 +1,20 @@
+<Window x:Class="AiGateway.App.IssuedKeyWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="新的代理密钥" Width="640" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" FontSize="13">
+    <StackPanel Margin="20">
+        <TextBlock x:Name="Heading" FontSize="16" FontWeight="SemiBold" />
+        <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Foreground="#B42318"
+                   Text="这把密钥只显示这一次。关掉这个窗口后，网关只保留它的哈希，再也看不到明文。" />
+        <TextBlock Margin="0,12,0,6" TextWrapping="Wrap"
+                   Text="把下面这段合并进 Claude Code 的 ~/.claude/settings.json，或在终端里设置同名环境变量。这是一把可随时吊销的访问凭证，不是你的上游 Key。" />
+        <TextBox x:Name="SnippetBox" IsReadOnly="True" FontFamily="Consolas" TextWrapping="NoWrap"
+                 HorizontalScrollBarVisibility="Auto" Padding="6" />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <TextBlock x:Name="CopyStatus" VerticalAlignment="Center" Margin="0,0,12,0" Foreground="#1F4E79" />
+            <Button x:Name="CopyButton" Content="复制配置片段" Padding="14,4" Click="OnCopy" />
+            <Button x:Name="CloseButton" Content="我已保存，关闭" Padding="14,4" Margin="8,0,0,0" Click="OnClose" />
+        </StackPanel>
+    </StackPanel>
+</Window>

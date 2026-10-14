@@ -18,13 +18,13 @@ C# / .NET 8 WPF 桌面应用。Claude Code 把 `ANTHROPIC_BASE_URL` 指向本机
 | --- | --- |
 | 1–3 探索 / 澄清 / 架构 | ✅ **2026-10-15 review 后重写**（第一版出自上一个模型；为什么改见下文与 `evidence.md` §2） |
 | 4 实现计划 | ✅ **13 个故事**：`docs/plan/ai-gateway.implementation-plan.json`。M1 = S1–S8（DeepSeek 直通可用），M2 = S11–S12（OpenAI 翻译） |
-| 5 编码 | 🟡 **S1–S6 完成（2026-10-15）**：3 + 1 个项目；`config.json` + DPAPI 只写密钥库；网关宿主（只监听 `127.0.0.1:8000`、单实例、托盘常驻）；代理密钥（签发 / 鉴权 / 即刻吊销）；路由与真实 Key 注入（不跟随重定向、上游客户端零日志、发完即删）；**直通转发**：`/v1/messages` 与 `count_tokens` 只改 `model`，请求 / 响应头白名单，SSE 真流式（进程外演示事件按上游 0.7 秒节奏逐个到达），客户端掐断即取消上游，上游错误连同 `retry-after` 原样透传，Key 解不开时提示重新录入。65 个测试全绿。**网关的转发主干已完成，但还没有界面录 Key / 发密钥。下一步 = S7**（最小 UI） |
+| 5 编码 | 🟡 **S1–S7 完成（2026-10-15）**：3 + 1 个项目；`config.json` + DPAPI 只写密钥库；网关宿主（只监听 `127.0.0.1`、单实例、托盘常驻）；代理密钥（签发 / 鉴权 / 即刻吊销）；路由与真实 Key 注入（不跟随重定向、上游客户端零日志、发完即删）；**直通转发**（只改 `model`、头白名单、SSE 真流式、中止传播、上游错误原样透传）；**最小 UI**：顶栏一键切换 + 上游与 Key / 代理密钥 / 设置三页，Key 只经输入框交给只写库、交完即清空，代理密钥明文只在一次性窗口里出现并附可复制的 Claude Code 配置片段，本机以外的上游必须 https，端口被占时提议改用空闲端口。真 exe 用 UI 自动化走通全程（桩上游收到真实 Key、换好的模型；吊销后 401）。91 个测试全绿。S7 有 4 处实现期判断是我做的，见计划 S7 的 scopeNotes，可推翻。**下一步 = S8**（M1 验收：真 Claude Code → 网关 → DeepSeek，需要你的 DeepSeek Key） |
 
 ## 先读这些（按顺序）
 
 1. `docs/architecture/ai-gateway.architecture-understanding.md` —— 决策 D1–D14、不做清单、外部事实（带网址）、两条脊柱、安全梯子。
 2. `docs/architecture/ai-gateway.structurizr.dsl` —— 真相源，L1/L2/L3 三视图，15 个组件。**已用 Structurizr CLI 解析通过**。
-3. `docs/architecture/ai-gateway.dependency-impact-findings.md` —— 为什么是 3 + 1 个项目、五条护栏、S1 实测教训、两扇后门、变更影响。
+3. `docs/architecture/ai-gateway.dependency-impact-findings.md` —— 为什么是 3 + 1 个项目、十条护栏、S1 实测教训、两扇后门、UI 层的守法、变更影响。
 4. `docs/architecture/ai-gateway.request-flow.dot` —— 一次请求：鉴权 → 路由 → 直通 / 翻译 → 注入 → 上游。
 5. `docs/architecture/ai-gateway.dependencies.dot` —— 程序集引用、运行时装配、禁止边。
 6. `docs/architecture/ai-gateway.evidence.md` —— 每条决策出自谁、哪一轮；外部证据出处。**别把我的推断当成你的决定。**

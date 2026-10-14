@@ -1,11 +1,179 @@
 <Window x:Class="AiGateway.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="AI 本地代理网关" Height="220" Width="460">
-    <StackPanel Margin="24">
-        <TextBlock Text="网关运行中" FontSize="18" FontWeight="SemiBold" />
-        <TextBlock x:Name="AddressText" Margin="0,8,0,0" FontFamily="Consolas" />
-        <TextBlock Margin="0,16,0,0" Foreground="Gray" TextWrapping="Wrap"
-                   Text="关闭这个窗口只会隐藏到系统托盘，网关继续运行。要真正退出，请右键托盘图标选「退出」。" />
-    </StackPanel>
+        Title="AI 本地代理网关" Height="620" Width="940" MinHeight="520" MinWidth="820"
+        FontSize="13">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Padding" Value="14,4" />
+            <Setter Property="MinWidth" Value="72" />
+        </Style>
+        <Style x:Key="Hint" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#6B7785" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,4,0,0" />
+        </Style>
+        <Style x:Key="Message" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#1F4E79" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,8,0,0" />
+        </Style>
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="0,0,12,0" />
+        </Style>
+    </Window.Resources>
+
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#F3F5F8" BorderBrush="#DDE2E8" BorderThickness="0,0,0,1" Padding="16,12">
+            <StackPanel>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="一键切换" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    <TextBlock Text="上游" Margin="16,0,8,0" VerticalAlignment="Center" />
+                    <ComboBox x:Name="ActiveProvider" Width="180"
+                              ItemsSource="{Binding Activation.Providers}" DisplayMemberPath="Name"
+                              SelectedItem="{Binding Activation.SelectedProvider}" />
+                    <TextBlock Text="模型" Margin="16,0,8,0" VerticalAlignment="Center" />
+                    <ComboBox x:Name="ActiveModel" Width="220" IsEditable="True"
+                              ItemsSource="{Binding Activation.Models}"
+                              Text="{Binding Activation.SelectedModel, UpdateSourceTrigger=PropertyChanged}" />
+                    <Button x:Name="ActivateButton" Content="切换" Margin="12,0,0,0" Click="OnActivate" />
+                </StackPanel>
+                <TextBlock x:Name="ActiveText" Text="{Binding Activation.CurrentText}" Margin="0,8,0,0" Foreground="#2F3B48" />
+                <TextBlock x:Name="ActivationMessage" Text="{Binding Activation.Message}" Foreground="#B42318" TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+
+        <StatusBar DockPanel.Dock="Bottom">
+            <TextBlock x:Name="StatusText" Text="{Binding StatusText}" />
+        </StatusBar>
+
+        <TabControl x:Name="Tabs" Margin="12">
+            <TabItem x:Name="ProvidersTab" Header="上游与 Key">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <ListView x:Name="ProviderList" ItemsSource="{Binding Providers.Rows}" SelectedItem="{Binding Providers.Selected}">
+                        <ListView.View>
+                            <GridView>
+                                <GridViewColumn Header="名称" Width="130" DisplayMemberBinding="{Binding Name}" />
+                                <GridViewColumn Header="类型" Width="170" DisplayMemberBinding="{Binding KindText}" />
+                                <GridViewColumn Header="地址" Width="270" DisplayMemberBinding="{Binding BaseUrl}" />
+                                <GridViewColumn Header="模型" Width="170" DisplayMemberBinding="{Binding ModelsText}" />
+                                <GridViewColumn Header="Key" Width="70" DisplayMemberBinding="{Binding KeyText}" />
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
+
+                    <Grid Grid.Row="1" Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Text="名称" Style="{StaticResource FieldLabel}" />
+                        <TextBox x:Name="ProviderName" Grid.Column="1" Text="{Binding Providers.Name, UpdateSourceTrigger=PropertyChanged}" Margin="0,2" />
+
+                        <TextBlock Grid.Row="1" Text="类型" Style="{StaticResource FieldLabel}" />
+                        <ComboBox x:Name="ProviderKind" Grid.Row="1" Grid.Column="1" HorizontalAlignment="Left" Width="260" Margin="0,2"
+                                  ItemsSource="{Binding Providers.Kinds}" DisplayMemberPath="Text" SelectedValuePath="Kind"
+                                  SelectedValue="{Binding Providers.Kind}" />
+
+                        <TextBlock Grid.Row="2" Text="地址" Style="{StaticResource FieldLabel}" />
+                        <StackPanel Grid.Row="2" Grid.Column="1" Margin="0,2">
+                            <TextBox x:Name="ProviderUrl" Text="{Binding Providers.BaseUrl, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Style="{StaticResource Hint}" Text="例如 https://api.deepseek.com/anthropic 或 https://api.anthropic.com；本机以外必须用 https。" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="3" Text="模型" Style="{StaticResource FieldLabel}" />
+                        <StackPanel Grid.Row="3" Grid.Column="1" Margin="0,2">
+                            <TextBox x:Name="ProviderModels" Text="{Binding Providers.Models, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Style="{StaticResource Hint}" Text="多个用逗号分隔。切换时从这里选；也可以在上方「模型」框里直接输入别的名字。" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Margin="0,8,0,0">
+                            <Button x:Name="NewProviderButton" Content="新建" Click="OnNewProvider" />
+                            <Button x:Name="SaveProviderButton" Content="保存" Margin="8,0,0,0" Click="OnSaveProvider" />
+                            <Button x:Name="DeleteProviderButton" Content="删除" Margin="8,0,0,0" Click="OnDeleteProvider" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="5" Text="Key" Style="{StaticResource FieldLabel}" Margin="0,14,12,0" />
+                        <StackPanel Grid.Row="5" Grid.Column="1" Margin="0,14,0,0">
+                            <StackPanel Orientation="Horizontal">
+                                <PasswordBox x:Name="KeyBox" Width="360" IsEnabled="{Binding Providers.CanSaveKey}" />
+                                <Button x:Name="SaveKeyButton" Content="保存 Key" Margin="8,0,0,0" Click="OnSaveKey" IsEnabled="{Binding Providers.CanSaveKey}" />
+                            </StackPanel>
+                            <TextBlock Style="{StaticResource Hint}" Text="给上面选中的上游保存 Key。Key 用 Windows DPAPI 加密后只存在本机；保存后输入框立即清空，界面里再也看不到明文。" />
+                        </StackPanel>
+
+                        <TextBlock x:Name="ProvidersMessage" Grid.Row="6" Grid.Column="1" Style="{StaticResource Message}" Text="{Binding Providers.Message}" />
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+            <TabItem x:Name="ProxyKeysTab" Header="代理密钥">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="标签" Style="{StaticResource FieldLabel}" />
+                        <TextBox x:Name="NewKeyLabel" Width="220" Text="{Binding ProxyKeys.NewLabel, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button x:Name="GenerateKeyButton" Content="生成新密钥" Margin="8,0,0,0" Click="OnGenerateKey" />
+                    </StackPanel>
+
+                    <ListView x:Name="ProxyKeyList" Grid.Row="1" Margin="0,12,0,0"
+                              ItemsSource="{Binding ProxyKeys.Rows}" SelectedItem="{Binding ProxyKeys.Selected}">
+                        <ListView.View>
+                            <GridView>
+                                <GridViewColumn Header="标签" Width="200" DisplayMemberBinding="{Binding Label}" />
+                                <GridViewColumn Header="指纹" Width="120" DisplayMemberBinding="{Binding Fingerprint}" />
+                                <GridViewColumn Header="状态" Width="90" DisplayMemberBinding="{Binding StatusText}" />
+                                <GridViewColumn Header="创建时间" Width="160" DisplayMemberBinding="{Binding CreatedText}" />
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
+
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,8,0,0">
+                        <Button x:Name="RevokeKeyButton" Content="吊销所选" Click="OnRevokeKey" />
+                        <Button x:Name="DeleteKeyButton" Content="删除所选" Margin="8,0,0,0" Click="OnDeleteKey" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Row="3">
+                        <TextBlock Style="{StaticResource Hint}" Margin="0,10,0,0"
+                                   Text="代理密钥是发给 Claude Code 的、可随时吊销的访问凭证，不是你的上游 Key。明文只在生成时显示一次，这里只显示指纹。吊销立即生效且不可恢复。" />
+                        <TextBlock x:Name="ProxyKeysMessage" Style="{StaticResource Message}" Text="{Binding ProxyKeys.Message}" />
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+
+            <TabItem x:Name="SettingsTab" Header="设置">
+                <StackPanel Margin="16">
+                    <TextBlock x:Name="AddressText" Text="{Binding Settings.AddressText}" TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                        <TextBlock Text="端口" Style="{StaticResource FieldLabel}" />
+                        <TextBox x:Name="PortBox" Width="100" Text="{Binding Settings.PortText, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button x:Name="SavePortButton" Content="保存" Margin="8,0,0,0" Click="OnSavePort" />
+                    </StackPanel>
+                    <TextBlock x:Name="SettingsMessage" Style="{StaticResource Message}" Text="{Binding Settings.Message}" />
+                </StackPanel>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
 </Window>

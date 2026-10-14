@@ -1,5 +1,5 @@
 rule_id,severity,from,to,edge_type,reason,detection,confidence,note
-FORBIDDEN-03,MEDIUM,AiGateway.App（ViewModels）,AiGateway 与 AiGateway.Security 的内部类型,compile-time,UI 直接操作存储或保护器会绕开端口；明文 Key 一旦进 ViewModel 字段就难保不外泄,两个库默认 internal、各只公开一个注册方法 + 代码审查：ViewModel 不得持有 Key 字符串字段,high,2026-10-15 改写：原规则依赖 10 程序集的引用隔离；合并原 FORBIDDEN-03b 与 FORBIDDEN-08
+FORBIDDEN-03,MEDIUM,AiGateway.App（ViewModels）,AiGateway 与 AiGateway.Security 的内部类型,compile-time,UI 直接操作存储或保护器会绕开端口；明文 Key 一旦进 ViewModel 字段就难保不外泄,两个库默认 internal、各只公开注册方法与窄端口；测试反射遍历 ViewModel 对象图：保存真实 Key / 签发代理密钥后搜不到明文（扫描器先对埋了明文的对象自检）,high,2026-10-15 改写：原规则依赖 10 程序集的引用隔离；合并原 FORBIDDEN-03b 与 FORBIDDEN-08。S7 红灯实测：ViewModel 加一个留住 Key 或代理密钥明文的属性即红
 FORBIDDEN-04,MEDIUM,请求处理路径,AiGateway.App（UI）,runtime-call,请求线程回调 UI 会形成运行时环并可能与 Dispatcher 死锁,请求路径不得调用 Dispatcher.Invoke/InvokeAsync；UI 通知只走单向事件,medium,与 RISK-07 同源
 FORBIDDEN-05,MEDIUM,AiGateway（除配置存储外）,config.json,file-access,绕过配置存储直接读写文件会让加密字段与原子写出现两处真相,只有配置存储组件触碰该文件（代码审查）,medium,2026-10-15 改写：原为"绕过仓储直连 SQLite"
 FORBIDDEN-06,HIGH,AiGateway（运行日志）,AiGateway.Security,data-leak,日志侧一旦能拿到真实 Key，一行日志就成了外泄通道；日志只允许记代理密钥指纹,编译期：AiGateway 引不到 Security（NU1201 目标框架不兼容 + MSB4006 反向成环；S1 实测）+ 护栏① + 日志写入器只接受 ProxyKeyFingerprint 类型,high,保留
@@ -19,6 +19,8 @@ RISK-11,CLOSED,IHttpClientFactory 自带日志处理器,鉴权头,data-leak,S5 �
 RISK-14,HIGH,上游重定向,别的主机,data-leak,x-api-key 是自定义头；HttpClient 跟随重定向时会把它带到 Location 指向的主机,上游客户端 AllowAutoRedirect=false + 护栏⑧（302 原样交回，另一台主机收不到请求）,high,S5 新增；红灯实测：允许重定向即红
 RISK-12,LOW,上游错误体,入站响应,data-leak,直通原样透传上游错误体；若上游回显完整 Key 就会泄到客户端,M1 验收实测（计划 S8）,low,主流上游只回显打码片段，未逐家核实（OPEN-12）
 RISK-13,HIGH,环境变量 / appsettings,Kestrel 监听地址,binding-scope,默认宿主构建器会读 ASPNETCORE_URLS 与 Kestrel__Endpoints__* 并追加监听，悄悄打开 0.0.0.0，D9 失效,宿主用 WebApplication.CreateEmptyBuilder（不读任何配置源）+ 护栏⑥测试,high,S3 红灯实测：换回 CreateBuilder() 后环境变量真的多开了 0.0.0.0 监听
+RISK-15,HIGH,上游配置,上游 API,data-leak,上游地址填成 http 时，注入的真实 Key 会以明文走网络,保存上游时只有回环地址（本机桩 / 本机代理）允许 http，其余必须 https；设置层与 ViewModel 各有测试,high,S7 新增；红灯实测：去掉这条校验即红
+RISK-16,MEDIUM,确认框,吊销代理密钥 / 删除上游与 Key,usability,WPF MessageBox 默认按钮是「是」，误按回车就执行了不可逆操作,删除 / 吊销确认框显式默认「否」；真 exe 实测 DM_GETDEFID 改前 6、改后 7,medium,S7 新增；MessageBox 无法单元测试，靠代码审查 + 实测
 DECIDED-01,HIGH,AiGateway（代理密钥验证器）,已启用哈希的内存快照,correctness,吊销要即刻生效；同进程下写配置的同时整体替换内存快照即可，不必每请求读盘,护栏⑤：吊销后下一个请求必须 401（S4 落地：快照就是 ConfigStore.Current，写入即替换；红灯实测——给鉴权加一次性缓存后该测试变红）,high,2026-10-15 修订：原"每请求现查库、不加缓存"的前提（写入方在别处）在 D3 下不成立
 FORBIDDEN-01,RETIRED,Mapping.Anthropic,Mapping.OpenAI,compile-time,两个 codec 互引,—,—,D1 修订后只有一个翻译器，规则不再有对象
 FORBIDDEN-02,RETIRED,AiGateway.Core,其他程序集,compile-time,内核反向依赖,—,—,D11 后没有 Core 程序集

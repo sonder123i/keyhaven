@@ -3,6 +3,7 @@ using AiGateway.Passthrough;
 using AiGateway.ProxyKeys;
 using AiGateway.Routing;
 using AiGateway.Secrets;
+using AiGateway.Settings;
 using AiGateway.Upstream;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -29,6 +30,7 @@ public static class AiGatewayServiceCollectionExtensions
         services.AddSingleton<IProxyKeyRegistry, ProxyKeyRegistry>();
         services.AddSingleton<RouteResolver>();
         services.AddSingleton<PassthroughForwarder>();
+        services.AddSingleton<IGatewaySettings, GatewaySettings>();
 
         // Never follow redirects: a redirect to another host would carry the injected x-api-key header there.
         // Remove the client's built-in loggers: at Trace level they record request headers, and RedactLoggedHeaders only

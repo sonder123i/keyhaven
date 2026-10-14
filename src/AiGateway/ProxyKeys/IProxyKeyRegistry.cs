@@ -21,9 +21,15 @@ public sealed class IssuedProxyKey(string id, string label, string plaintext, Pr
     public ProxyKeyFingerprint Fingerprint { get; } = fingerprint;
 }
 
+public sealed record ProxyKeySummary(string Id, string Label, ProxyKeyFingerprint Fingerprint, bool Enabled, DateTimeOffset CreatedAt);
+
 public interface IProxyKeyRegistry
 {
     IssuedProxyKey Create(string label);
 
+    IReadOnlyList<ProxyKeySummary> List();
+
     bool Revoke(string id);
+
+    bool Delete(string id);
 }

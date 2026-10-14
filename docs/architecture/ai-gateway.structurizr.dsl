@@ -14,16 +14,16 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关 —— 
 
         gateway = softwareSystem "AI 本地代理网关" "单机桌面应用：真实上游 Key 以 DPAPI 密文存在本机 JSON 配置里；对外只发可吊销的代理密钥。Anthropic 兼容上游走直通，OpenAI 上游走翻译。" {
 
-            appExe = container "AiGateway.App.exe" "唯一可部署单元，UI 与 Kestrel 同进程（D3）。由 3 个程序集组成：AiGateway.App（WPF + 组合根 + 托盘）、AiGateway（网关、路由、直通、翻译、配置、日志；不引用 Security）、AiGateway.Security（DPAPI 与注入处理器；全工程唯一能解密）。各库默认 internal，只公开注册方法与两个端口（IRealKeyVault 只写、ICiphertextStore 只存取密文）。" "C# / .NET 8 + WPF + ASP.NET Core Kestrel" {
+            appExe = container "AiGateway.App.exe" "唯一可部署单元，UI 与 Kestrel 同进程（D3）。由 3 个程序集组成：AiGateway.App（WPF + 组合根 + 托盘）、AiGateway（网关、路由、直通、翻译、配置、日志；不引用 Security）、AiGateway.Security（DPAPI 与注入处理器；全工程唯一能解密）。各库默认 internal，只公开注册方法与几个窄端口（IRealKeyVault 只写、ICiphertextStore 只存取密文、IProxyKeyRegistry 只给指纹、IGatewaySettings 不碰任何 Key；完整清单见 findings §1）。" "C# / .NET 8 + WPF + ASP.NET Core Kestrel" {
                 tags "Deployable"
 
-                compositionRoot = component "组合根与宿主" "[AiGateway.App] 调 GatewayServer.Create 并在装配回调里调 AddAiGatewaySecurity()；Kestrel 由空宿主构建器起，不读任何环境变量与 appsettings（否则 Kestrel__Endpoints__* 会多开 0.0.0.0 监听，S3 实测）；端口被占时弹出可读提示后退出；单实例 Mutex；托盘常驻：关窗只隐藏，托盘菜单才退出（D3 的必然要求，否则关窗即断 Claude Code）。" ".NET Generic Host + DI" {
+                compositionRoot = component "组合根与宿主" "[AiGateway.App] 调 GatewayServer.Create 并在装配回调里调 AddAiGatewaySecurity()；Kestrel 由空宿主构建器起，不读任何环境变量与 appsettings（否则 Kestrel__Endpoints__* 会多开 0.0.0.0 监听，S3 实测）；端口被占时提议改用一个空闲端口（写进配置后重建宿主），拒绝则退出；单实例 Mutex；托盘常驻：关窗只隐藏，托盘菜单才退出（D3 的必然要求，否则关窗即断 Claude Code）。" ".NET Generic Host + DI" {
                     tags "App"
                 }
-                wpfViews = component "WPF 界面" "[AiGateway.App] 四类页面（D5）：Provider/模型管理、代理密钥管理、一键切换、运行日志。代理密钥明文只在生成时显示一次，旁边给出可复制的 Claude Code 配置片段；不改写用户的 settings.json。" "XAML" {
+                wpfViews = component "WPF 界面" "[AiGateway.App] 顶栏一键切换 + 三个页：上游与 Key、代理密钥、设置（端口，D9）；运行日志页在 S9（D5）。真实 Key 只经 PasswordBox 交给只写端口，交完即清空；代理密钥明文只在一次性窗口里出现，旁边给出可复制的 Claude Code 配置片段；不改写用户的 settings.json。删除 / 吊销的确认框默认按钮是「否」。" "XAML" {
                     tags "App"
                 }
-                viewModels = component "ViewModels" "[AiGateway.App] 只经端口操作：配置存储、只写密钥库、激活快照、日志读取。" "CommunityToolkit.Mvvm（待定）" {
+                viewModels = component "ViewModels" "[AiGateway.App] 只经公开端口操作：IGatewaySettings（上游、激活、端口；本机以外的上游地址必须 https）、IRealKeyVault（只写）、IProxyKeyRegistry（签发、只给指纹的列表、吊销、删除）；日志读取在 S9。不持有任何 Key 字符串（反射扫描对象图的测试守住）。" "手写 INotifyPropertyChanged，无 MVVM 库" {
                     tags "App"
                 }
 
@@ -89,10 +89,10 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关 —— 
         gateway.appExe.compositionRoot -> gateway.appExe.httpEndpoints "后台线程启动 Kestrel：地址写死 127.0.0.1，端口取自配置" "in-process"
         gateway.appExe.compositionRoot -> gateway.appExe.credentialInjector "经 Security 唯一的公开注册方法，把注入处理器挂进上游 HttpClient 管道" "in-process"
         gateway.appExe.wpfViews -> gateway.appExe.viewModels "数据绑定 / 命令" "XAML Binding"
-        gateway.appExe.viewModels -> gateway.appExe.configStore "增删改 Provider 与端口；生成代理密钥时只写入其 SHA-256" "in-process"
+        gateway.appExe.viewModels -> gateway.appExe.configStore "经 IGatewaySettings / IProxyKeyRegistry：增删改上游（删除连带删密文）与端口；签发代理密钥只写入其 SHA-256" "in-process"
         gateway.appExe.viewModels -> gateway.appExe.secretProtector "保存 / 删除真实 Key：只写端口 IRealKeyVault，签名上不可读回" "in-process"
-        gateway.appExe.viewModels -> gateway.appExe.activationState "一键切换：整体替换不可变快照" "in-process"
-        gateway.appExe.viewModels -> gateway.appExe.runLog "只读最近若干行" "in-process"
+        gateway.appExe.viewModels -> gateway.appExe.activationState "一键切换：IGatewaySettings.Activate 整体替换配置快照；没存 Key 的上游拒绝激活" "in-process"
+        gateway.appExe.viewModels -> gateway.appExe.runLog "只读最近若干行（S9）" "in-process"
 
         gateway.appExe.httpEndpoints -> gateway.appExe.proxyKeyAuthenticator "/v1/* 先鉴权（/health 除外）" "in-process"
         gateway.appExe.proxyKeyAuthenticator -> gateway.appExe.configStore "读已启用代理密钥哈希的内存快照（写入即替换）" "in-process"

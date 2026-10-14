@@ -174,6 +174,29 @@ public sealed class ProxyKeyTests : IAsyncLifetime
     }
 
     [Fact]
+    public void List_gives_fingerprints_and_status_only()
+    {
+        var key = Registry.Create("laptop");
+        Registry.Revoke(key.Id);
+
+        var summary = Assert.Single(Registry.List());
+
+        Assert.Equal((key.Id, "laptop", key.Fingerprint, false), (summary.Id, summary.Label, summary.Fingerprint, summary.Enabled));
+    }
+
+    [Fact]
+    public async Task Deleted_key_is_gone_and_rejected()
+    {
+        var key = Registry.Create("laptop");
+
+        Assert.True(Registry.Delete(key.Id));
+
+        Assert.Empty(Registry.List());
+        Assert.False(Registry.Delete(key.Id));
+        Assert.Equal(HttpStatusCode.Unauthorized, (await PostMessages(h => h.Add("x-api-key", key.Plaintext))).StatusCode);
+    }
+
+    [Fact]
     public async Task Hashes_from_an_unknown_algorithm_version_are_not_trusted()
     {
         await _server.DisposeAsync();

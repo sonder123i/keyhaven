@@ -118,20 +118,20 @@
     },
     {
       "id": "S7",
-      "title": "最小 UI：Provider 与 Key、代理密钥、一键切换",
-      "covers": ["D5", "D8", "D9", "FORBIDDEN-03", "RISK-07"],
+      "title": "最小 UI：上游与 Key、代理密钥、一键切换、端口",
+      "covers": ["D5", "D8", "D9", "FORBIDDEN-03", "RISK-07", "RISK-15", "RISK-16"],
       "tasks": [
-        "Provider 页：增删改（名称、上游类型、BaseUrl、模型名）；录入 Key 经 IRealKeyVault，录完立即清空输入框",
-        "代理密钥页：生成（明文只显示一次 + 一键复制 Claude Code 配置片段：ANTHROPIC_BASE_URL 与 ANTHROPIC_AUTH_TOKEN）；列表只显示指纹；启用 / 吊销",
-        "一键切换：选 Provider + 模型 → 替换激活快照并写配置",
-        "端口设置（D9 唯一可改的监听项）：显示当前端口，可改，保存后提示重启生效；S3 的端口被占提示改为指向这里",
-        "ViewModel 不持有 Key 字符串字段；文案按\"可吊销的访问凭证\"写，不写成\"安全加密\""
+        "上游与 Key 页：增删改（名称、上游类型、BaseUrl、模型名）；id 由名称生成且永不改（DPAPI entropy 绑在 id 上）；删上游连带删密文并取消激活；本机以外的地址必须 https；录入 Key 经 IRealKeyVault，录完立即清空 PasswordBox",
+        "代理密钥页：生成（明文只在一次性窗口里显示 + 一键复制 Claude Code 配置片段：ANTHROPIC_BASE_URL 与 ANTHROPIC_AUTH_TOKEN）；列表只显示指纹与状态；吊销（不可恢复）与删除",
+        "一键切换（顶栏）：选上游 + 模型 → IGatewaySettings.Activate 整体替换配置快照；没存 Key 的上游拒绝激活",
+        "设置页（D9 唯一可改的监听项）：显示当前地址，可改端口，保存后提示下次启动生效；启动时端口被占 → 提议改用一个空闲端口并重启宿主",
+        "ViewModel 不持有 Key 字符串：反射扫描对象图的测试（扫描器带自检）；不可逆操作的确认框默认按钮是「否」"
       ],
       "executionFit": "fits-one-run",
-      "demoBoundary": "在 UI 里录入 DeepSeek Key、生成代理密钥、复制配置片段、切到 DeepSeek，全程不碰任何文件",
-      "scopeNotes": "运行日志页在 S9。不改写用户的 settings.json，只给可复制片段。",
+      "demoBoundary": "已于 2026-10-15 在真 exe 上用 UI 自动化实测（桩上游代替 DeepSeek）：远程 http 被拒；未存 Key 时切换被拒；存 Key 后切换，桩上游收到真实 Key 的 x-api-key、无 Authorization、model 被换成所选模型；config.json 里搜不到真实 Key 与代理密钥明文；吊销确认框默认按钮实测为「否」（DM_GETDEFID：改前 6、改后 7），确认框开着时密钥仍可用、点「是」后下一个请求 401；8000 被占时提议的空闲端口写进配置且 /health 200，激活档保留。红灯 8 组：VM 留住 Key、VM 留住代理密钥明文、去掉 https 拦截、切换不查 Key、删上游不删密文、配置片段带尾斜杠、重名不加后缀、端口上限放宽——各自只让自己的测试变红",
+      "scopeNotes": "运行日志页在 S9。不改写用户的 settings.json，只给可复制片段。实现期的 4 处判断是我做的、不是你定的，可推翻：① 端口被占时提议空闲端口并自动重启（原计划是指向设置页）；② 代理密钥只有「吊销（不可恢复）」与「删除」，没有「重新启用」（原计划写启用 / 吊销）；③ 上游地址只有本机回环可以用 http；④ 删除 / 吊销确认框默认「否」。",
       "blockedBy": ["S4", "S5"],
-      "techGuidance": null
+      "techGuidance": "WPF 的 GridView 行在 UI 自动化里是 DataItem，名字取自行对象的 ToString()——record 的默认 ToString 会把全部字段念给读屏软件，所以行记录都重写了 ToString。"
     },
     {
       "id": "S8",

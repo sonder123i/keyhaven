@@ -18,7 +18,7 @@ AiGateway.Tests ──► 以上全部（InternalsVisibleTo）
 | --- | --- | --- |
 | AiGateway **不引用** Security | 网关 / 鉴权 / 日志代码拿到解密能力（FORBIDDEN-06/07） | 编译期**两道独立拦截**（S1 实测）：AiGateway 目标 `net8.0` 引用 `net8.0-windows` 的 Security 直接 **NU1201**；就算改了目标框架，Security → AiGateway 已存在，反向再加一条就是 **MSB4006 循环依赖**。护栏①测试是第三道 |
 | 只有 Security 引用 ProtectedData | 有人在别处直接调 DPAPI | 编译期：包引用；AiGateway 目标 `net8.0`，就算加了包，Windows 专属 API 也会触发 CA1416（警告即错误，S1 review 实测过这条） |
-| App 看不见两个库的内部类型 | UI 直接 `new` 出保护器或注入器（FORBIDDEN-03/08） | `internal` 默认（越界即 CS0122，S1 实测）。公开面只有：AiGateway 的 `AddAiGateway()`、`GatewayServer`（宿主入口，监听地址常量在它内部，App 改不了）与 `GatewayPortInUseException`、`IRealKeyVault`（只写，给 UI）、`IProxyKeyRegistry` + `IssuedProxyKey` + `ProxyKeyFingerprint`（签发 / 吊销代理密钥，给 UI）、`ICiphertextStore` + `CiphertextRecord`（只存取密文，给 Security）；Security 的 `AddAiGatewaySecurity()`。**给 Security 的是公开密文端口，而不是 `InternalsVisibleTo`**——后者会让 Security 看到 AiGateway 内部的上游客户端，等于给 FORBIDDEN-09 开后门；密文端口被谁拿到都解不开（解密点只有一处，护栏②） |
+| App 看不见两个库的内部类型 | UI 直接 `new` 出保护器或注入器（FORBIDDEN-03/08） | `internal` 默认（越界即 CS0122，S1 实测）。公开面只有：AiGateway 的 `AddAiGateway()`、`GatewayServer`（宿主入口，监听地址常量在它内部，App 改不了）与 `GatewayPortInUseException`、`IRealKeyVault`（只写，给 UI）、`IProxyKeyRegistry` + `IssuedProxyKey` + `ProxyKeyFingerprint` + `ProxyKeySummary`（签发 / 只给指纹的列表 / 吊销 / 删除代理密钥，给 UI）、`IGatewaySettings` + `ProviderConfig` + `ActiveSelection` + `UpstreamKind`（上游、激活、端口，给 UI；签名里没有任何 Key，S7）、`ICiphertextStore` + `CiphertextRecord`（只存取密文，给 Security）；Security 的 `AddAiGatewaySecurity()`。**给 Security 的是公开密文端口，而不是 `InternalsVisibleTo`**——后者会让 Security 看到 AiGateway 内部的上游客户端，等于给 FORBIDDEN-09 开后门；密文端口被谁拿到都解不开（解密点只有一处，护栏②） |
 | 协议代码分不分程序集 | ——（入站只有一种协议，不存在两个 codec 互引） | 不拆 |
 
 第一版拆成 10 个程序集，大部分边界拦的是"两个 codec 互引""Core 反向依赖"这类在单入站下不存在的错误；代价却是实打实的：S1 骨架撞出两处程序集环（MSB4006）和一处传递引用泄露。
@@ -47,6 +47,13 @@ AiGateway.Tests ──► 以上全部（InternalsVisibleTo）
 - 交出明文的 `IssuedProxyKey` 是普通类而**不是 record**：record 自动生成的 `ToString()` 会把 `Plaintext` 打进任何格式化它的日志。S4 红灯实测：改成 record 后"格式化不泄露明文"测试变红。
 - 鉴权产出的请求上下文**没有任何密钥字段**，"顺手把真实 Key 带下去"在类型上不成立。
 - 翻译器无状态单例，每请求状态（块索引游标、工具参数累积、usage）放在每请求的上下文对象里，防并发串流（RISK-05）。
+
+**UI 层（S7）**：
+- **ViewModel 对象图里没有 Key**：真实 Key 只从 `PasswordBox` 交给 `IRealKeyVault.Save`，随即清空输入框；代理密钥明文只进一次性窗口。测试用反射遍历 ViewModel 的整个对象图（字段、集合、嵌套对象）找明文，扫描器先对一个埋了明文的对象自检，证明它真能找到。红灯实测：给 ViewModel 加一个留住 Key 或代理密钥明文的属性即红（FORBIDDEN-03）。
+- **本机以外的上游地址必须 https**（RISK-15）：http 会让真实 Key 明文出网；只有回环地址（本机桩、本机代理）可以用 http。
+- **上游 id 由名称生成且永不改**：DPAPI 的 entropy 绑在 id 上，改名只改显示名。
+- **不可逆操作的确认框默认按钮是「否」**（RISK-16）：真 exe 实测 `DM_GETDEFID` 改前 6（「是」）、改后 7（「否」）——误按回车不会吊销密钥或删掉上游。
+- WPF 的 GridView 行在 UI 自动化里叫 `DataItem`，可访问名称取自行对象的 `ToString()`；record 默认会把全部字段念出来，所以行记录都重写了 `ToString()`。
 
 ## 3. S1 实测留下的教训（仍然有效）
 

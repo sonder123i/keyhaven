@@ -20,6 +20,22 @@ internal sealed class ProxyKeyRegistry(ConfigStore store) : IProxyKeyRegistry
         return new IssuedProxyKey(record.Id, label, plaintext, new ProxyKeyFingerprint(hash));
     }
 
+    public IReadOnlyList<ProxyKeySummary> List() =>
+        store.Current.ProxyKeys
+            .Select(k => new ProxyKeySummary(k.Id, k.Label, new ProxyKeyFingerprint(k.Sha256), k.Enabled, k.CreatedAt))
+            .ToList();
+
+    public bool Delete(string id)
+    {
+        var deleted = false;
+        store.Update(config =>
+        {
+            deleted = config.ProxyKeys.Any(k => k.Id == id);
+            return deleted ? config with { ProxyKeys = [.. config.ProxyKeys.Where(k => k.Id != id)] } : config;
+        });
+        return deleted;
+    }
+
     public bool Revoke(string id)
     {
         var revoked = false;
