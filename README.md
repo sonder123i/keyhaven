@@ -15,8 +15,8 @@ C#/.NET 8 WPF 桌面应用。本机 `127.0.0.1:<port>` 起一个 Kestrel 代理�
 | 阶段 | 状态 |
 | --- | --- |
 | 1 探索 / 2 澄清 / 3 架构 | ✅ 完成，见下 |
-| 4 实现计划（拆成带依赖顺序的故事） | ⬜ 未开始 |
-| 5 编码 | ⬜ 未开始 |
+| 4 实现计划（拆成带依赖顺序的故事） | ✅ 完成 —— **18 个故事在 `docs/plan/ai-gateway.implementation-plan.json`**（JSON 已校验：无悬空 `blockedBy`、无依赖环、每故事 ≤7 任务且都标 `fits-one-run`） |
+| 5 编码 | ⬜ 未开始，**下一步 = S1**（解决方案骨架 + `.gitattributes` + `global.json`） |
 
 ## 读这些文件（按顺序）
 
