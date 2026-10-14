@@ -1,5 +1,6 @@
 using System.Net;
 using AiGateway.Configuration;
+using AiGateway.Passthrough;
 using AiGateway.ProxyKeys;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Connections;
@@ -45,11 +46,14 @@ public sealed class GatewayServer : IAsyncDisposable
         var app = builder.Build();
         app.Use(RequireProxyKey);
         app.MapGet(HealthPath, () => Results.Ok(new { status = "ok" }));
-        app.MapPost("/v1/messages", NoActiveUpstream);
-        app.MapPost("/v1/messages/count_tokens", NoActiveUpstream);
+        app.MapPost("/v1/messages", Forward);
+        app.MapPost("/v1/messages/count_tokens", Forward);
 
         return new GatewayServer(app, port);
     }
+
+    private static Task Forward(HttpContext context) =>
+        context.RequestServices.GetRequiredService<PassthroughForwarder>().ForwardAsync(context);
 
     private static async Task RequireProxyKey(HttpContext context, RequestDelegate next)
     {
@@ -70,9 +74,6 @@ public sealed class GatewayServer : IAsyncDisposable
 
         await next(context);
     }
-
-    private static IResult NoActiveUpstream() =>
-        AnthropicErrors.Create(StatusCodes.Status503ServiceUnavailable, "api_error", "No upstream is active in the gateway yet.");
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {

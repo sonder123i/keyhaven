@@ -39,7 +39,7 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关 —— 
                 routeResolver = component "路由解析" "[AiGateway] 读激活快照，决定走直通还是翻译、真实模型名是什么。不读代理密钥的任何属性。" "C#" {
                     tags "Lib"
                 }
-                passthroughForwarder = component "直通转发器" "[AiGateway] 上游原生说 Anthropic 协议时使用（Anthropic、DeepSeek /anthropic）。请求体只改顶层 model 字段，其余原样；转发 anthropic-version / anthropic-beta 与原查询串；响应状态码与 SSE 字节原样逐块回流并 flush；客户端中止即取消上游。thinking、cache_control 等一律原样携带。" "JsonNode 单字段改写 + 流式复制" {
+                passthroughForwarder = component "直通转发器" "[AiGateway] 上游原生说 Anthropic 协议时使用（Anthropic、DeepSeek /anthropic）。请求体只改顶层 model 字段，其余语义不变（thinking、cache_control、中文原样）；请求头白名单转发 anthropic-*、accept、user-agent，保留原查询串；响应状态码与白名单头（content-type、retry-after、request-id、anthropic-*）原样，SSE 字节逐块回流；客户端中止即取消上游。失败映射为 Anthropic 形状错误：无激活 503、OpenAI 上游 501、非 JSON 400、上游不可达 502、Key 在当前账户下解不开 503 并提示重新录入。" "JsonNode 单字段改写 + 流式复制" {
                     tags "Lib"
                 }
                 translator = component "Anthropic → OpenAI 翻译器" "[AiGateway] 上游只说 chat/completions 时使用（第二里程碑）。请求翻译（带 stream_options.include_usage）；流式把 OpenAI chunk 重编码为 Anthropic 事件序列并合成 usage；按 D4 只保证 tool_use，thinking 在这条路上丢弃。无状态单例，每请求状态放在上下文对象里。" "System.Text.Json" {

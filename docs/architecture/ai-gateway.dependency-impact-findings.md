@@ -96,6 +96,12 @@ H 的收益：没有任何代码能调用注入器；上游客户端不经手明
 ## 6. 难点
 
 1. **直通保真**（M1）：头（`anthropic-version`、`anthropic-beta`）、查询串（`?beta=true`）、只改顶层 `model` 而其余字段不变、SSE 逐块 flush、客户端中止传播到上游。难度低，但任何一处错都只在真 Claude Code 上暴露——所以 M1 以真客户端验收收尾。
+   **S6 落地与实测**：
+   - 请求头**白名单**转发：`anthropic-*`、`accept`、`user-agent`；cookie、客户端遥测头、代理密钥一律留下（护栏⑩之外又一层）。响应头同样白名单：`content-type`、`retry-after`、`request-id`、`anthropic-*`。
+   - 请求体用 `JsonNode` 只改 `model`，测试用 JSON 深度比较证明其余字段（含 `thinking`、`cache_control`、中文）语义不变；红灯：顺手删掉 `thinking`（旧版规范模型的做法）即红。
+   - **真正致命的是缓冲，不是漏 flush**：红灯实测里去掉显式 `FlushAsync` 仍然全绿（Kestrel 每次 `WriteAsync` 自己就 flush）；而"先读完整个响应再写"或用默认的 `ResponseContentRead`，流式与中止两条测试**同时**变红。显式 flush 保留作双保险。
+   - 客户端中止 → 上游请求被取消（进程外演示：1.2 秒掐断，上游在同一时刻收到取消）；上游客户端无超时（默认 100 秒会掐断长回答）。
+   - 失败映射：无激活 → 503；OpenAI 上游 → 501（M2）；请求体不是 JSON 对象 → 400；上游连不上 → 502；**存的 Key 在当前 Windows 账户下解不开 → 503 并提示重新录入**（RISK-01 的用户可见面）；上游自己的 4xx/5xx 连同 `retry-after` 原样透传。
 2. **工具调用增量重编码**（M2）：OpenAI `tool_calls` 是扁平分片（`index` 定位、首片带 `id`+`name`、后续只追加 `arguments`、没有结束标记）；Anthropic 要求显式块生命周期（`content_block_start` → N × `input_json_delta` → `content_block_stop`）。必须凭空构造块边界：何时敢发 start（等 name 到齐）、文本块与多个并行工具块的索引如何共存、收尾时未完成的 JSON 怎么办。这是"一种协议没有、另一种强制要求"的信息，不是接口不匹配。
 
 ## 7. 尚未闭环

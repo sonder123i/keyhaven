@@ -10,10 +10,10 @@ DECRYPT-ONCE,HIGH,全工程,ProtectedData.Unprotect,invariant,解密点多于一
 RISK-01,HIGH,config.json,Windows DPAPI,data-protection,DPAPI 密文仅同机同用户可解；换机 / 换账户 / 重置密码后已存 Key 不可读,JSON 结构必须带 protector_id + key_version（计划 S2）,high,单向门：写第一条数据前定
 RISK-03,HIGH,AiGateway（翻译器）,OpenAI 上游 SSE,semantic-gap,OpenAI 流默认不返回 usage；不带 stream_options.include_usage 则 message_delta 的 usage 只能瞎猜,契约测试断言末 chunk 携带 usage,high,只影响 M2 翻译路径
 RISK-05,MEDIUM,AiGateway（翻译器）,每请求缓冲,lifetime,翻译器若用实例字段累积分片，并发会话会串流（Claude Code 常并行子代理）,无状态单例 + 每请求上下文对象；代码审查,medium,只影响 M2
-RISK-06,MEDIUM,AiGateway（直通与翻译）,上游请求,cancellation,客户端中止没传到上游会泄漏连接并让上游继续计费,集成测试：取消客户端请求后断言上游请求被取消,high,两条路径都要
+RISK-06,MEDIUM,AiGateway（直通与翻译）,上游请求,cancellation,客户端中止没传到上游会泄漏连接并让上游继续计费,集成测试：客户端中途挂断后断言桩上游观察到取消（S6；红灯实测——不传 RequestAborted 即红；进程外演示 1.2 秒掐断上游同刻收到取消）,high,直通已落地；翻译路径 M2 再覆盖
 RISK-07,MEDIUM,AiGateway.App,WPF Dispatcher,threading,请求线程回调 Dispatcher 会与 Kestrel 死锁,结构性杜绝：请求路径代码都在 AiGateway（net8.0，不引用 WPF），编译期就拿不到 Dispatcher,high,S3 确认
 RISK-08,HIGH,本机不受信来源（浏览器网页 / DNS rebinding / 其他程序）,127.0.0.1 监听端口,network,写死回环挡不住本机浏览器里的网页；没有鉴权就能被网页借用上游额度,D6 代理密钥鉴权：除 /health 外一律先验密钥，未知路径也一样（不暴露哪些路径存在）；测试覆盖无密钥 / 伪造密钥 / 吊销后,medium,S4 落地；2026-10-15 更正旧版"回环无攻击面"的理由；替代旧 RISK-02（旧表里 RISK-02 出现了两行重复 ID）
-RISK-09,HIGH,AiGateway（直通转发器）,Anthropic 兼容上游,protocol-fidelity,官方网关协议要求转发 anthropic-version（去掉会坏）与 anthropic-beta（去掉可能 400）；Claude Code 请求带 ?beta=true,集成测试（桩上游）断言头与查询串原样到达 + M1 真客户端验收,high,来源 https://code.claude.com/docs/en/llm-gateway-protocol
+RISK-09,HIGH,AiGateway（直通转发器）,Anthropic 兼容上游,protocol-fidelity,官方网关协议要求转发 anthropic-version（去掉会坏）与 anthropic-beta（去掉可能 400）；Claude Code 请求带 ?beta=true,集成测试（桩上游）断言头与查询串原样到达 + M1 真客户端验收,high,S6 桩上游已验证（anthropic-* 白名单转发、?beta=true 保留）；真 Claude Code 验收在 S8。来源 https://code.claude.com/docs/en/llm-gateway-protocol
 RISK-10,MEDIUM,用户关窗,Kestrel,availability,同进程（D3）下关掉主窗口即停代理，Claude Code 立刻报错,托盘常驻：关窗只隐藏，托盘菜单才退出（计划 S3）,high,review 补
 RISK-11,CLOSED,IHttpClientFactory 自带日志处理器,鉴权头,data-leak,S5 实测：默认在 Trace 级原样记录请求头（x-api-key: 真实 Key）；RedactLoggedHeaders 只给格式化文本打码，结构化字段里仍是明文，JSON / Serilog 等结构化输出会照写,上游命名客户端 RemoveAllLoggers() + 护栏⑦（抓取器先证明自己在工作，再断言零条上游客户端日志且全部日志含结构化字段都搜不到 Key）,high,OPEN-13 已关闭；红灯实测：去掉 RemoveAllLoggers 即红
 RISK-14,HIGH,上游重定向,别的主机,data-leak,x-api-key 是自定义头；HttpClient 跟随重定向时会把它带到 Location 指向的主机,上游客户端 AllowAutoRedirect=false + 护栏⑧（302 原样交回，另一台主机收不到请求）,high,S5 新增；红灯实测：允许重定向即红
