@@ -18,7 +18,7 @@ AiGateway.Tests ──► 以上全部（InternalsVisibleTo）
 | --- | --- | --- |
 | AiGateway **不引用** Security | 网关 / 鉴权 / 日志代码拿到解密能力（FORBIDDEN-06/07） | 编译期**两道独立拦截**（S1 实测）：AiGateway 目标 `net8.0` 引用 `net8.0-windows` 的 Security 直接 **NU1201**；就算改了目标框架，Security → AiGateway 已存在，反向再加一条就是 **MSB4006 循环依赖**。护栏①测试是第三道 |
 | 只有 Security 引用 ProtectedData | 有人在别处直接调 DPAPI | 编译期：包引用；AiGateway 目标 `net8.0`，就算加了包，Windows 专属 API 也会触发 CA1416（警告即错误，S1 review 实测过这条） |
-| App 看不见两个库的内部类型 | UI 直接 `new` 出保护器或注入器（FORBIDDEN-03/08） | `internal` 默认（越界即 CS0122，S1 实测）。公开面只有：AiGateway 的 `AddAiGateway()`、`GatewayServer`（宿主入口，监听地址常量在它内部，App 改不了）与 `GatewayPortInUseException`、`IRealKeyVault`（只写，给 UI）、`ICiphertextStore` + `CiphertextRecord`（只存取密文，给 Security）；Security 的 `AddAiGatewaySecurity()`。**给 Security 的是公开密文端口，而不是 `InternalsVisibleTo`**——后者会让 Security 看到 AiGateway 内部的上游客户端，等于给 FORBIDDEN-09 开后门；密文端口被谁拿到都解不开（解密点只有一处，护栏②） |
+| App 看不见两个库的内部类型 | UI 直接 `new` 出保护器或注入器（FORBIDDEN-03/08） | `internal` 默认（越界即 CS0122，S1 实测）。公开面只有：AiGateway 的 `AddAiGateway()`、`GatewayServer`（宿主入口，监听地址常量在它内部，App 改不了）与 `GatewayPortInUseException`、`IRealKeyVault`（只写，给 UI）、`IProxyKeyRegistry` + `IssuedProxyKey` + `ProxyKeyFingerprint`（签发 / 吊销代理密钥，给 UI）、`ICiphertextStore` + `CiphertextRecord`（只存取密文，给 Security）；Security 的 `AddAiGatewaySecurity()`。**给 Security 的是公开密文端口，而不是 `InternalsVisibleTo`**——后者会让 Security 看到 AiGateway 内部的上游客户端，等于给 FORBIDDEN-09 开后门；密文端口被谁拿到都解不开（解密点只有一处，护栏②） |
 | 协议代码分不分程序集 | ——（入站只有一种协议，不存在两个 codec 互引） | 不拆 |
 
 第一版拆成 10 个程序集，大部分边界拦的是"两个 codec 互引""Core 反向依赖"这类在单入站下不存在的错误；代价却是实打实的：S1 骨架撞出两处程序集环（MSB4006）和一处传递引用泄露。
@@ -39,7 +39,8 @@ AiGateway.Tests ──► 以上全部（InternalsVisibleTo）
 ②③ 是源码级 grep 断言，粗糙但够用：它们守的是"出现了就一定该有人看一眼"的东西。ArchUnitNET 不再需要。
 
 **类型护栏**（不用测试，签名本身就拦）：
-- 日志写入器只接受 `ProxyKeyFingerprint`（只包前缀片段的类型），不接受 `string`——想塞明文就得显式构造它，review 时刺眼（FORBIDDEN-06）。
+- 日志写入器只接受 `ProxyKeyFingerprint`，不接受 `string`——想塞明文就得显式构造它，review 时刺眼（FORBIDDEN-06）。**指纹 = 代理密钥 SHA-256 的前 8 位十六进制**（S4 定稿），不是明文前缀：日志和 UI 里不出现明文的任何一部分，用户靠创建时的标签认密钥。
+- 交出明文的 `IssuedProxyKey` 是普通类而**不是 record**：record 自动生成的 `ToString()` 会把 `Plaintext` 打进任何格式化它的日志。S4 红灯实测：改成 record 后"格式化不泄露明文"测试变红。
 - 鉴权产出的请求上下文**没有任何密钥字段**，"顺手把真实 Key 带下去"在类型上不成立。
 - 翻译器无状态单例，每请求状态（块索引游标、工具参数累积、usage）放在每请求的上下文对象里，防并发串流（RISK-05）。
 

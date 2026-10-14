@@ -1,5 +1,6 @@
 using System.Net;
 using AiGateway.Configuration;
+using AiGateway.ProxyKeys;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Hosting;
@@ -10,6 +11,8 @@ namespace AiGateway.Hosting;
 
 public sealed class GatewayServer : IAsyncDisposable
 {
+    private const string HealthPath = "/health";
+
     private readonly WebApplication _app;
 
     private GatewayServer(WebApplication app, int configuredPort)
@@ -40,10 +43,36 @@ public sealed class GatewayServer : IAsyncDisposable
         configureServices?.Invoke(builder.Services);
 
         var app = builder.Build();
-        app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+        app.Use(RequireProxyKey);
+        app.MapGet(HealthPath, () => Results.Ok(new { status = "ok" }));
+        app.MapPost("/v1/messages", NoActiveUpstream);
+        app.MapPost("/v1/messages/count_tokens", NoActiveUpstream);
 
         return new GatewayServer(app, port);
     }
+
+    private static async Task RequireProxyKey(HttpContext context, RequestDelegate next)
+    {
+        if (context.Request.Path == HealthPath)
+        {
+            await next(context);
+            return;
+        }
+
+        var authenticator = context.RequestServices.GetRequiredService<ProxyKeyAuthenticator>();
+        if (!authenticator.IsAuthorized(ProxyKeyAuthenticator.ReadPresentedKey(context.Request)))
+        {
+            await AnthropicErrors
+                .Create(StatusCodes.Status401Unauthorized, "authentication_error", "Missing, unknown or revoked proxy key.")
+                .ExecuteAsync(context);
+            return;
+        }
+
+        await next(context);
+    }
+
+    private static IResult NoActiveUpstream() =>
+        AnthropicErrors.Create(StatusCodes.Status503ServiceUnavailable, "api_error", "No upstream is active in the gateway yet.");
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {

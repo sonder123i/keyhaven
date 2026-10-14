@@ -1,4 +1,5 @@
 using AiGateway.Configuration;
+using AiGateway.ProxyKeys;
 using AiGateway.Secrets;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -9,14 +10,20 @@ public static class AiGatewayServiceCollectionExtensions
     public static IServiceCollection AddAiGateway(this IServiceCollection services, string? configPath = null)
     {
         services.AddSingleton(_ => new ConfigStore(configPath ?? ConfigStore.DefaultPath));
-        services.AddSingleton<ICiphertextStore>(sp => sp.GetRequiredService<ConfigStore>());
-        return services;
+        return services.AddStoreDependents();
     }
 
     internal static IServiceCollection AddGatewayCore(this IServiceCollection services, ConfigStore store)
     {
         services.AddSingleton(store);
-        services.AddSingleton<ICiphertextStore>(store);
+        return services.AddStoreDependents();
+    }
+
+    private static IServiceCollection AddStoreDependents(this IServiceCollection services)
+    {
+        services.AddSingleton<ICiphertextStore>(sp => sp.GetRequiredService<ConfigStore>());
+        services.AddSingleton<ProxyKeyAuthenticator>();
+        services.AddSingleton<IProxyKeyRegistry, ProxyKeyRegistry>();
         return services;
     }
 }
