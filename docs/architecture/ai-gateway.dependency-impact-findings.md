@@ -18,7 +18,7 @@ AiGateway.Tests ──► 以上全部（InternalsVisibleTo）
 | --- | --- | --- |
 | AiGateway **不引用** Security | 网关 / 鉴权 / 日志代码拿到解密能力（FORBIDDEN-06/07） | 编译期**两道独立拦截**（S1 实测）：AiGateway 目标 `net8.0` 引用 `net8.0-windows` 的 Security 直接 **NU1201**；就算改了目标框架，Security → AiGateway 已存在，反向再加一条就是 **MSB4006 循环依赖**。护栏①测试是第三道 |
 | 只有 Security 引用 ProtectedData | 有人在别处直接调 DPAPI | 编译期：包引用；AiGateway 目标 `net8.0`，就算加了包，Windows 专属 API 也会触发 CA1416（警告即错误，S1 review 实测过这条） |
-| App 看不见两个库的内部类型 | UI 直接 `new` 出保护器或注入器（FORBIDDEN-03/08） | `internal` 默认 + 每个库只公开一个注册方法 |
+| App 看不见两个库的内部类型 | UI 直接 `new` 出保护器或注入器（FORBIDDEN-03/08） | `internal` 默认（越界即 CS0122，S1 实测）。公开面只有：AiGateway 的 `AddAiGateway()`、`IRealKeyVault`（只写，给 UI）、`ICiphertextStore` + `CiphertextRecord`（只存取密文，给 Security）；Security 的 `AddAiGatewaySecurity()`。**给 Security 的是公开密文端口，而不是 `InternalsVisibleTo`**——后者会让 Security 看到 AiGateway 内部的上游客户端，等于给 FORBIDDEN-09 开后门；密文端口被谁拿到都解不开（解密点只有一处，护栏②） |
 | 协议代码分不分程序集 | ——（入站只有一种协议，不存在两个 codec 互引） | 不拆 |
 
 第一版拆成 10 个程序集，大部分边界拦的是"两个 codec 互引""Core 反向依赖"这类在单入站下不存在的错误；代价却是实打实的：S1 骨架撞出两处程序集环（MSB4006）和一处传递引用泄露。
@@ -30,7 +30,7 @@ AiGateway.Tests ──► 以上全部（InternalsVisibleTo）
 | # | 断言 | 拦什么 |
 | --- | --- | --- |
 | ① | `src/AiGateway/AiGateway.csproj` 里没有指向 Security 的 `ProjectReference`；**且** AiGateway 程序集元数据不引用 Security | 有人给 AiGateway 加 Security 引用。**只查元数据不够**（S1 实测）：编译器会删掉没被代码用到的引用，"只加引用不写代码"时元数据检查仍是绿的，所以要同时查 csproj |
-| ② | 全 `src/` 里 `ProtectedData.Unprotect` 恰好出现 1 次，且在注入处理器 | 第二个解密点 |
+| ② | 全 `src/` 里 `ProtectedData.Unprotect` 恰好出现 1 次，在 `SecretProtector.cs`（S2 落地）；S5 起再加一条：`SecretProtector.Unprotect` 只被注入处理器调用 | 第二个解密点 |
 | ③ | `src/AiGateway.Security/` 源码里不出现 `HttpClient`、`IHttpClientFactory`、`SocketsHttpHandler`、`HttpClientHandler`、`new HttpRequestMessage`（`base.SendAsync` 除外） | 注入器自己发请求（FORBIDDEN-09） |
 | ④ | `IRealKeyVault` 的所有成员返回 `void` / `bool` / `Task` / `Task<bool>` | 只写端口被加上读方法（FORBIDDEN-10） |
 | ⑤ | 吊销一个代理密钥后，下一个请求返回 401 | 内存快照没随写入替换（DECIDED-01） |

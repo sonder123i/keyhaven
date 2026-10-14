@@ -14,7 +14,7 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关 —— 
 
         gateway = softwareSystem "AI 本地代理网关" "单机桌面应用：真实上游 Key 以 DPAPI 密文存在本机 JSON 配置里；对外只发可吊销的代理密钥。Anthropic 兼容上游走直通，OpenAI 上游走翻译。" {
 
-            appExe = container "AiGateway.App.exe" "唯一可部署单元，UI 与 Kestrel 同进程（D3）。由 3 个程序集组成：AiGateway.App（WPF + 组合根 + 托盘）、AiGateway（网关、路由、直通、翻译、配置、日志；不引用 Security）、AiGateway.Security（DPAPI 与注入处理器；全工程唯一能解密）。各库默认 internal，只公开一个注册方法。" "C# / .NET 8 + WPF + ASP.NET Core Kestrel" {
+            appExe = container "AiGateway.App.exe" "唯一可部署单元，UI 与 Kestrel 同进程（D3）。由 3 个程序集组成：AiGateway.App（WPF + 组合根 + 托盘）、AiGateway（网关、路由、直通、翻译、配置、日志；不引用 Security）、AiGateway.Security（DPAPI 与注入处理器；全工程唯一能解密）。各库默认 internal，只公开注册方法与两个端口（IRealKeyVault 只写、ICiphertextStore 只存取密文）。" "C# / .NET 8 + WPF + ASP.NET Core Kestrel" {
                 tags "Deployable"
 
                 compositionRoot = component "组合根与宿主" "[AiGateway.App] 调 AddAiGateway() 与 AddAiGatewaySecurity() 完成装配；后台线程启停 Kestrel；单实例 Mutex；托盘常驻：关窗只隐藏，托盘菜单才退出（D3 的必然要求，否则关窗即断 Claude Code）。" ".NET Generic Host + DI" {

@@ -6,7 +6,7 @@ FORBIDDEN-06,HIGH,AiGateway（运行日志）,AiGateway.Security,data-leak,日�
 FORBIDDEN-07,HIGH,AiGateway（代理密钥验证器）,AiGateway.Security,privilege-creep,鉴权器若能解密，401 失败路径就站在明文 Key 的可达范围内,编译期：AiGateway 引不到 Security（NU1201 + MSB4006；S1 实测）+ 护栏①,high,保留
 FORBIDDEN-09,HIGH,AiGateway.Security（注入处理器）,上游 API,runtime-call,注入器自己发请求会让真实 Key 出现第二条外发路径；它只能改经过它的请求头,护栏③：Security 源码不出现 HttpClient / IHttpClientFactory / SocketsHttpHandler / HttpClientHandler / new HttpRequestMessage（base.SendAsync 除外）；Security 不引用上游客户端,high,2026-10-15 定稿 H：注入器是组合根挂进上游 HttpClient 管道的 DelegatingHandler
 FORBIDDEN-10,HIGH,任意代码,IRealKeyVault,data-leak,只写密钥库一旦能读，任何能拿到该接口的类都能经 DI 取得明文，而类型 / 引用 / 解密点计数三层防线全绿,护栏④：IRealKeyVault 所有成员只返回 void / bool / Task / Task<bool>,high,2026-10-15 review 新增
-DECRYPT-ONCE,HIGH,全工程,ProtectedData.Unprotect,invariant,解密点多于一处就说明有人开了第二条后门；这是代理密钥机制成立与否的判据,护栏②：src 下恰好 1 处且在注入处理器,high,原"解密调用点计数 == 1"独立成行
+DECRYPT-ONCE,HIGH,全工程,ProtectedData.Unprotect,invariant,解密点多于一处就说明有人开了第二条后门；这是代理密钥机制成立与否的判据,护栏②：src 下 ProtectedData.Unprotect 恰好 1 处（SecretProtector.cs；S2 实测红灯）；S5 起 SecretProtector.Unprotect 只被注入处理器调用,high,原"解密调用点计数 == 1"独立成行
 RISK-01,HIGH,config.json,Windows DPAPI,data-protection,DPAPI 密文仅同机同用户可解；换机 / 换账户 / 重置密码后已存 Key 不可读,JSON 结构必须带 protector_id + key_version（计划 S2）,high,单向门：写第一条数据前定
 RISK-03,HIGH,AiGateway（翻译器）,OpenAI 上游 SSE,semantic-gap,OpenAI 流默认不返回 usage；不带 stream_options.include_usage 则 message_delta 的 usage 只能瞎猜,契约测试断言末 chunk 携带 usage,high,只影响 M2 翻译路径
 RISK-05,MEDIUM,AiGateway（翻译器）,每请求缓冲,lifetime,翻译器若用实例字段累积分片，并发会话会串流（Claude Code 常并行子代理）,无状态单例 + 每请求上下文对象；代码审查,medium,只影响 M2

@@ -1,4 +1,6 @@
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using AiGateway.Secrets;
 
 namespace AiGateway.Tests;
 
@@ -7,7 +9,7 @@ public class GuardrailTests
     [Fact]
     public void AiGateway_csproj_has_no_reference_to_Security()
     {
-        var csproj = Path.Combine(RepoRoot(), "src", "AiGateway", "AiGateway.csproj");
+        var csproj = Path.Combine(RepoPaths.Src, "AiGateway", "AiGateway.csproj");
 
         var includes = XDocument.Load(csproj)
             .Descendants("ProjectReference")
@@ -27,14 +29,27 @@ public class GuardrailTests
         Assert.DoesNotContain("AiGateway.Security", referenced);
     }
 
-    private static string RepoRoot()
+    [Fact]
+    public void Dpapi_decryption_happens_in_exactly_one_place()
     {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "AiGateway.sln")))
-        {
-            dir = dir.Parent;
-        }
+        var hits = Directory.EnumerateFiles(RepoPaths.Src, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains(Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar))
+            .SelectMany(f => Regex.Matches(File.ReadAllText(f), @"ProtectedData\.Unprotect\s*\(").Select(_ => Path.GetFileName(f)))
+            .ToList();
 
-        return dir?.FullName ?? throw new InvalidOperationException("AiGateway.sln not found above " + AppContext.BaseDirectory);
+        Assert.Equal(["SecretProtector.cs"], hits);
+    }
+
+    [Fact]
+    public void IRealKeyVault_cannot_hand_out_plaintext()
+    {
+        Type[] allowedReturns = [typeof(void), typeof(bool), typeof(Task), typeof(Task<bool>)];
+
+        Assert.Empty(typeof(IRealKeyVault).GetProperties());
+        Assert.All(typeof(IRealKeyVault).GetMethods(), method =>
+        {
+            Assert.Contains(method.ReturnType, allowedReturns);
+            Assert.DoesNotContain(method.GetParameters(), p => p.ParameterType.IsByRef);
+        });
     }
 }
