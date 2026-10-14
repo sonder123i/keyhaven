@@ -76,7 +76,7 @@ WPF UI 与 Kestrel **不是两个容器**，它们是同一个容器里的两组
 
 ## L3 Components：两条不许打折的脊柱
 
-`AiGateway.App.exe` 内 18 个组件（17 个 MVP + 1 个 Phase 2）。读这张图要抓住**两条**脊柱：
+`AiGateway.App.exe` 内 **19 个组件**（18 个 MVP + 1 个 Phase 2 `failoverPolicy`）。数量以真相源 `.structurizr.dsl` 为准：`grep -c '= component'` → 19，逐个为 `compositionRoot · wpfViews · viewModels · httpEndpoints · proxyKeyAuthenticator · httpListenerPolicy · credentialInjector · routeResolver · anthropicCodec · openAiCodec · canonicalModel · toolCallBridge · streamRelay · upstreamClients · activationState · secretProtector · repositories · runLog · failoverPolicy`。读这张图要抓住**两条**脊柱：
 
 **脊柱①（协议）—— 不许打折：**
 
