@@ -1,327 +1,234 @@
 {
   "feature": "AI 本地代理网关（Windows WPF）—— 阶段 4 实现计划",
-  "source": "README.md（D1–D10 + 不做清单）+ docs/architecture/ai-gateway.architecture-understanding.md + ai-gateway.violations.csv",
+  "source": "README.md 决策 D1–D14 + docs/architecture/ai-gateway.architecture-understanding.md + ai-gateway.violations.csv",
   "codebase": "E:\\key",
-  "produced": "2026-10-15",
-  "note": "covers 用需求/禁令 ID（D*、FORBIDDEN-*、RISK-*、OPEN-*）而非序号，为了每条任务都能反查回 violations.csv 与决策表。",
+  "produced": "2026-10-15（review 后重切；旧版 18 故事见 git cc01023）",
+  "note": "covers 用决策 / 规则 ID（D*、FORBIDDEN-*、RISK-*、OPEN-*、护栏①–⑤）。M1 = S1–S8：真 Claude Code 经网关直通 DeepSeek 可用，零协议翻译。M2 = S11–S12：OpenAI 翻译。",
+  "milestones": {
+    "M1": ["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"],
+    "M2": ["S11", "S12"]
+  },
   "stories": [
     {
       "id": "S1",
-      "title": "仓库与解决方案骨架（含行尾策略）",
-      "covers": ["D3", "findings §3"],
+      "title": "骨架重做为 3 + 1 个项目，护栏测试①",
+      "covers": ["D11", "护栏①", "findings §3"],
       "tasks": [
-        "加 .gitattributes：* text=auto，*.cs/*.xaml/*.csproj 明确 eol，png/db 标 -text —— 关掉提交时那 8 条 LF→CRLF 警告",
-        "global.json 钉 SDK 8.0.426，防止将来装到 SDK 10 后构建行为漂移",
-        "建 sln + 10 个 csproj：Core / Mapping.Anthropic / Mapping.OpenAI / Gateway / Providers / Storage / Security / App / Hosting / ArchitectureTests",
-        "Directory.Build.props 统一 net8.0-windows、Nullable、ImplicitUsings、TreatWarningsAsErrors",
-        "项目引用严格按 dependencies.dot 的编译期边建，一条不多"
+        "删掉现有 10 项目骨架；建 AiGateway（net8.0，FrameworkReference Microsoft.AspNetCore.App）、AiGateway.Security（net8.0-windows）、AiGateway.App（WinExe，WPF）、AiGateway.Tests（xUnit）",
+        "引用只有三条：App → AiGateway、App → Security、Security → AiGateway；保留 .gitignore 负规则、MSBuildTreatWarningsAsErrors、eol=lf、global.json",
+        "两个库默认 internal，各只公开一个注册方法（AddAiGateway / AddAiGatewaySecurity）；InternalsVisibleTo 测试项目",
+        "护栏测试①：AiGateway 的 GetReferencedAssemblies() 不含 AiGateway.Security；删除模板占位测试",
+        "验收：从 GitHub 新克隆一份构建 + 测试"
       ],
       "executionFit": "fits-one-run",
-      "demoBoundary": "dotnet build 全绿；再次 git commit 无行尾警告",
-      "scopeNotes": "纯骨架，不含任何业务类型。",
+      "demoBoundary": "fresh clone 构建 0 警告 0 错误、护栏①绿；手工给 AiGateway 加 Security 引用会让护栏①变红（随后撤销）",
+      "scopeNotes": "纯骨架，不含业务类型。",
       "blockedBy": [],
-      "techGuidance": "程序集是 C# 里唯一能被编译器强制的耦合单位。.NET 的程序集环不是坏味道而是 CS0146 构建失败，所以引用清单必须照图建，不能『需要类型就加引用』。"
+      "techGuidance": "AiGateway 目标 net8.0 而非 net8.0-windows：这样它若误用 Windows 专属 API（包括 DPAPI）会被 CA1416 拦成编译错误。"
     },
     {
       "id": "S2",
-      "title": "架构测试脚手架：把 9 条禁令变成会红的测试",
-      "covers": ["FORBIDDEN-01..09", "DECIDED-01", "RISK-05", "RISK-07", "findings §7"],
+      "title": "配置存储 + DPAPI 只写密钥库（单向门字段在第一条数据前定）",
+      "covers": ["D2", "D13", "RISK-01", "FORBIDDEN-05", "FORBIDDEN-10", "护栏②④"],
       "tasks": [
-        "ArchitectureTests（xUnit + ArchUnitNET）引用全部程序集",
-        "一条测试对应一条 FORBIDDEN（含 01b / 03b 两条对称项）",
-        "Core 零 ProjectReference 断言（把 I=0.00 机器化）",
-        "FORBIDDEN-09 按定稿 H 写：Security 允许 DelegatingHandler 与请求头，禁止 HttpClient / IHttpClientFactory / SocketsHttpHandler / HttpClientHandler、禁止构造 HttpRequestMessage，且 Security 与 Providers 互不引用；Gateway 不得引用 Microsoft.Data.Sqlite",
-        "codec 与鉴权器无可变实例字段断言（RISK-05 / D10）",
-        "请求路径禁 Dispatcher.Invoke/InvokeAsync 断言（RISK-07）",
-        "『DPAPI 解密调用点计数 == 1』先写成 skipped 测试，S11 落地后启用"
+        "config.json 结构：providers（id、名称、上游类型、BaseUrl、模型名）、secrets（providerId、protector_id、key_version、密文）、proxyKeys（sha256、algo_version、enabled、标签）、active、port；放 %LOCALAPPDATA%；临时文件 + 替换的原子写",
+        "启动读一次，之后以内存快照为准；写入时同步替换快照",
+        "SecretProtector：DPAPI CurrentUser + 每 Provider 独立 entropy",
+        "IRealKeyVault 只写（Save / Delete / Exists），由 Security 实现；护栏④：所有成员只返回 void / bool / Task / Task<bool>",
+        "护栏②：src 下 ProtectedData.Unprotect 恰好 1 处",
+        "测试：密文往返；A 的密文用 B 的 entropy 解不开；写盘后的文件里搜不到明文 Key"
       ],
       "executionFit": "fits-one-run",
-      "demoBoundary": "dotnet test 全绿；手工加一条 Mapping.Anthropic→Mapping.OpenAI 引用会让测试立刻红，然后撤销",
-      "scopeNotes": "价值在于禁令早于实现代码就可执行，后续每个故事免费继承这道闸。",
+      "demoBoundary": "存一个假 Key 后打开 config.json，只看得到 DPAPI 密文与 protector_id / key_version",
+      "scopeNotes": "两处单向门（DPAPI 方案、代理密钥哈希方案）的版本字段现在不加，以后就无法区分老数据。",
       "blockedBy": ["S1"],
-      "techGuidance": "findings §7 的清单原样落地。只有测试能防漂移，清单不能。"
+      "techGuidance": null
     },
     {
       "id": "S3",
-      "title": "OPEN-03 存储选型 spike：Dapper vs EF Core",
-      "covers": ["UNKNOWN-01", "D2"],
+      "title": "宿主：Kestrel + 端口 + /health + 单实例 + 托盘常驻",
+      "covers": ["D3", "D9", "RISK-07", "RISK-10"],
       "tasks": [
-        "同一张 provider+secret 表两套写法各实现一遍（含建表迁移）",
-        "DPAPI 密文列往返一次",
-        "代理密钥哈希的索引查找一次",
-        "记录代码行数与『迁移自管』的真实成本",
-        "结论写进 docs/decisions/ADR，并把 violations.csv 的 UNKNOWN-01 改 CLOSED"
+        "App 组合根调 AddAiGateway()；后台线程启停 Kestrel；监听地址是代码常量 127.0.0.1，端口取自配置（默认 8000）",
+        "/health 免鉴权；端口被占时给出可读错误，不静默失败",
+        "单实例 Mutex",
+        "托盘：关窗只隐藏到托盘，托盘菜单才退出；退出时优雅关闭在途请求",
+        "请求路径不调用 Dispatcher",
+        "测试：/health 返回 200；第二个实例被挡下"
       ],
       "executionFit": "fits-one-run",
-      "demoBoundary": "两份可运行 spike + 一份 ADR；主干只保留选中的一套",
-      "scopeNotes": "spike 代码不进主干。判据是『轻量纯本地 + 单文件 SQLite』，不是生态热度。",
+      "demoBoundary": "启动后 curl 127.0.0.1:8000/health 得 200；关掉主窗口后 curl 仍得 200；托盘菜单退出后端口释放",
+      "scopeNotes": "开机自启不在本故事，S10 再问要不要。",
       "blockedBy": ["S1"],
       "techGuidance": null
     },
     {
       "id": "S4",
-      "title": "Core：规范模型 + 四端口 + 五个必须进内核的类型",
-      "covers": ["D1 脊柱①", "findings §3", "findings §4.2 方案B"],
+      "title": "代理密钥：生成、哈希、内存快照鉴权、吊销",
+      "covers": ["D6", "D8", "D10", "DECIDED-01", "RISK-08", "FORBIDDEN-06/07", "护栏⑤"],
       "tasks": [
-        "CanonicalRequest/Message/Block/Delta/Usage/StopReason record（纯 C#，零引用）",
-        "四端口：IInboundRequestDecoder / IOutboundRequestEncoder / IOutboundStreamDecoder / IInboundEventEncoder",
-        "ToolCallSession 进 Core",
-        "RequestContext：只含 ProxyKeyFingerprint + RouteProfileId + 中止令牌，不含任何密钥字段",
-        "ProxyKeyFingerprint 新类型（只包前缀片段，不包完整密钥）",
-        "IRealKeyVault 端口，**只写**：Save / Delete / Exists，不得有任何返回或写出明文的方法（S1 实测新增：保存真实 Key 的用例入口，实现落在 Security，App 只见端口 —— 缺了它 S5 就会被迫把 Storage→Security 那条环加回来；S1 review：Core 端口对所有程序集可见，能读就是 DI 后门且类型/引用/grep 三层防线全绿）",
-        "IActivationState + 不可变快照契约（实现留给 S13）"
+        "生成高熵代理密钥，只返回一次明文；存 SHA-256 + algo_version + enabled",
+        "鉴权：x-api-key 或 Authorization: Bearer；与已启用哈希的内存快照做 FixedTimeEquals；零可变状态",
+        "失败返回 Anthropic 形状 401",
+        "日志写入器只接受 ProxyKeyFingerprint 类型（类型护栏，先建类型，日志本身在 S9）",
+        "护栏⑤：吊销后下一个请求必须 401；另测不带密钥的请求一律 401（RISK-08）"
       ],
       "executionFit": "fits-one-run",
-      "demoBoundary": "Core 编译通过，且 S2 的零依赖断言为绿",
-      "scopeNotes": "类型放对位置比事后搬家便宜（§3 列的五个『必然要搬进 Core』一次到位）。",
-      "blockedBy": ["S1"],
-      "techGuidance": "第 5 条 ProxyKeyFingerprint 是全设计里最便宜的强约束：用类型而不是规则守边界。日志写入器参数类型是它，谁想塞明文就必须显式构造，review 时刺眼。"
+      "demoBoundary": "生成一把密钥 → 带它请求 /v1/messages 不再是 401（此时还没有上游，返回路由失败即可）→ 吊销 → 下一个请求立刻 401",
+      "scopeNotes": "裸 SHA-256、无盐、不用慢哈希的理由写在代码旁：代理密钥由程序生成、高熵，没有离线猜解面。",
+      "blockedBy": ["S2", "S3"],
+      "techGuidance": "不再每请求读盘：UI 与网关同进程，写配置时同步替换快照即可即刻吊销；护栏⑤是这条语义的唯一防线。"
     },
     {
       "id": "S5",
-      "title": "Storage + Security：schema 与 DPAPI（两处单向门必须在写第一行数据前定）",
-      "covers": ["D2", "D8", "RISK-01", "findings §5 前瞻约束 1/3"],
+      "title": "激活快照 + 路由 + 注入处理器（H）",
+      "covers": ["D7", "D12", "FORBIDDEN-09", "RISK-11", "OPEN-13", "护栏②③"],
       "tasks": [
-        "建库迁移（按 S3 的选型结论）",
-        "secret 表含 protector_id + key_version 列",
-        "proxy_key 表含 sha256 哈希 + algo_version + enabled 列",
-        "SecretProtector：DPAPI CurrentUser + 每 Provider 独立 entropy（域分离）",
-        "CredentialInjectingHandler : DelegatingHandler 骨架（定稿 H）：按请求选项里的 provider id 取密文、解密、写鉴权头；不构造、不发起请求。选项键名是 Core 里的字符串常量，Core 不碰 System.Net",
-        "测试：密文往返 + 用错 entropy 必须解不开"
+        "激活快照：不可变 record，Volatile 引用整体替换；路由输出（上游类型、BaseUrl、真实模型名）",
+        "上游命名 HttpClient：只在请求选项里设 provider id（键名是 AiGateway 里的字符串常量），代码不经手真实 Key",
+        "CredentialInjectingHandler : DelegatingHandler：按 provider id 取密文、解密、写鉴权头（Anthropic 兼容上游用 x-api-key）；由 AddAiGatewaySecurity() 挂进管道",
+        "护栏③：Security 源码不出现 HttpClient / IHttpClientFactory / SocketsHttpHandler / HttpClientHandler / new HttpRequestMessage；护栏②确认唯一解密点在注入处理器",
+        "实测：IHttpClientFactory 自带日志处理器记录的鉴权头是否打码；没打码就显式配置打码并加测试",
+        "测试（桩上游）：鉴权头到达上游；上游客户端侧代码拿不到明文"
       ],
       "executionFit": "fits-one-run",
-      "demoBoundary": "一条测试证明 A Provider 的密文在 B Provider 的 entropy 下解不开",
-      "scopeNotes": "四列现在不加，日后从 DPAPI 迁到信封加密时无法识别哪些行是老密文。",
-      "blockedBy": ["S3", "S4"],
+      "demoBoundary": "桩上游收到正确的 x-api-key；日志输出里搜不到它",
+      "scopeNotes": "注入处理器没有任何调用方——如果实现时发现需要从别处调用它，说明设计偏了。",
+      "blockedBy": ["S2", "S3"],
       "techGuidance": null
     },
     {
       "id": "S6",
-      "title": "Hosting 组合根骨架 + 绑定清单扩展方法",
-      "covers": ["D3", "D9", "findings §2 结论"],
+      "title": "直通转发器（M1 核心）",
+      "covers": ["D1", "D4", "RISK-06", "RISK-09", "RISK-12"],
       "tasks": [
-        "AddAiGateway() 扩展方法绑定全部【非 UI】具体实现（S1 实测：Hosting 不得引用 App，否则与 App→Hosting 成环撞 MSB4006；ViewModel 由 App 入口自己注册）",
-        "单实例 Mutex",
-        "监听地址写死 127.0.0.1 代码常量，端口从配置读、默认 8000",
-        "Kestrel 在 WPF 进程内启动与优雅关闭",
-        "/health 免鉴权",
-        "端口被占时给出可诊断错误而非静默失败"
+        "/v1/messages 与 /v1/messages/count_tokens：请求体用 JsonNode 只改顶层 model，其余字段原样",
+        "转发 anthropic-version、anthropic-beta 与原查询串（?beta=true）；去掉入站鉴权头与逐跳头",
+        "响应：状态码与 content-type 原样；SSE 字节逐块写回并 flush",
+        "客户端中止 → 取消上游请求",
+        "上游 4xx / 5xx 原样透传，不重试",
+        "测试（桩上游）：头与查询串到达；model 被改而其余字段不变；流式逐块到达；中止传播到上游"
       ],
       "executionFit": "fits-one-run",
-      "demoBoundary": "起 App 后 curl 127.0.0.1:8000/health 得 200；UI 改端口后重启生效；二次启动被 Mutex 挡下",
-      "scopeNotes": "地址不是配置项，只有端口是 —— 这是 D9 的正面落地。对应 DSL 里的 httpListenerPolicy 组件。可执行入口留在 App（WinExe），Hosting 是 classlib，这样第二个入口（headless/CLI）引用 Hosting 时不会拖进 WPF。",
-      "blockedBy": ["S1"],
-      "techGuidance": "Hosting 的 I=1.00 是设计意图不是缺陷。绑定清单做成可复用扩展方法，是为了将来第二个入口（headless/CLI）不在两处重复漂移。"
+      "demoBoundary": "桩上游返回一段 SSE，curl -N 能逐块看到；中途 Ctrl+C 后桩上游观察到连接被取消",
+      "scopeNotes": "直通不解析响应事件——thinking、cache_control、未知字段都原样过去，这正是它比规范模型路线更保真的原因。",
+      "blockedBy": ["S4", "S5"],
+      "techGuidance": "Claude Code 依赖逐事件到达，任何缓冲（响应压缩、整体读完再写）都会让它看不到增量。"
     },
     {
       "id": "S7",
-      "title": "OPEN-04 真客户端探针（桩服务，趁早做）",
-      "covers": ["RISK-04", "OPEN-04", "findings §5 前瞻约束 2"],
+      "title": "最小 UI：Provider 与 Key、代理密钥、一键切换",
+      "covers": ["D5", "D8", "FORBIDDEN-03", "RISK-07"],
       "tasks": [
-        "先解决前提：本机没有 Claude Code —— 装（npm 全局）或退化为裸 HTTP，两条路线的取舍先定",
-        "桩服务：/v1/messages 返回手写合法 SSE 序列；/v1/messages/count_tokens 分 404 与 200 两种模式",
-        "观察客户端是否真的调用 count_tokens、长上下文下不调用会怎样",
-        "观察 content_block index 乱序时客户端是否直接断流",
-        "实测结论写回 README 的 OPEN-04 与 violations.csv 的 RISK-04"
+        "Provider 页：增删改（名称、上游类型、BaseUrl、模型名）；录入 Key 经 IRealKeyVault，录完立即清空输入框",
+        "代理密钥页：生成（明文只显示一次 + 一键复制 Claude Code 配置片段：ANTHROPIC_BASE_URL 与 ANTHROPIC_AUTH_TOKEN）；列表只显示指纹；启用 / 吊销",
+        "一键切换：选 Provider + 模型 → 替换激活快照并写配置",
+        "ViewModel 不持有 Key 字符串字段；文案按\"可吊销的访问凭证\"写，不写成\"安全加密\""
       ],
       "executionFit": "fits-one-run",
-      "demoBoundary": "一份实测记录：count_tokens 缺失时客户端的原始报错文本 + index 乱序时的行为",
-      "scopeNotes": "刻意排在 codec 与管道之前：桩服务一小时成本，却决定 S8/S9/S10 的契约细节。裸 HTTP 只能证端点存在、证不了客户端依赖，所以这一步值得为它装真客户端。",
-      "blockedBy": ["S6"],
+      "demoBoundary": "在 UI 里录入 DeepSeek Key、生成代理密钥、复制配置片段、切到 DeepSeek，全程不碰任何文件",
+      "scopeNotes": "运行日志页在 S9。不改写用户的 settings.json，只给可复制片段。",
+      "blockedBy": ["S4", "S5"],
       "techGuidance": null
     },
     {
       "id": "S8",
-      "title": "Anthropic codec：入站解析 + 事件编码 + thinking 降级（OPEN-01）",
-      "covers": ["D1", "D4 后果1", "RISK-03", "OPEN-01"],
+      "title": "M1 验收：真 Claude Code → 网关 → DeepSeek",
+      "covers": ["D14", "OPEN-12", "RISK-09", "RISK-12"],
       "tasks": [
-        "/v1/messages 请求体 → CanonicalRequest",
-        "thinking 字段：识别并显式降级（丢弃 or 透传给原生 Anthropic 上游），不得无声流入规范模型",
-        "CanonicalRequest → Anthropic 出站请求",
-        "上游 Anthropic SSE 帧 → CanonicalDelta",
-        "入站事件编码：message_start / content_block_start|delta|stop / message_delta / message_stop",
-        "message_delta 必须合成结构合法的 usage 对象",
-        "golden fixture 回放测试"
+        "装 Claude Code（npm 全局）；按 S7 的配置片段接入；需要你提供 DeepSeek Key",
+        "跑：普通对话、工具调用（读写文件）、thinking、图片、Ctrl+C 中止、一键切换后下一请求换模型",
+        "吊销代理密钥后 Claude Code 立刻 401",
+        "实测并记录：DeepSeek 是否接受 ?beta=true；count_tokens 是否支持、不支持时客户端行为；上游错误体是否回显 Key",
+        "结论写回 README 与 violations.csv"
       ],
       "executionFit": "fits-one-run",
-      "demoBoundary": "录制帧回放 → 自洽 Anthropic 事件序列，末帧 usage 存在且结构合法",
-      "scopeNotes": "codec 注册为 Singleton 且无可变实例字段，每请求状态在 StreamContext。",
-      "blockedBy": ["S4"],
-      "techGuidance": "RISK-03 的陷阱：『统计出局』不等于『usage 出局』。message_delta 结构上要求携带 usage，缺了整条事件序列就不合法——即使一行统计都不做。"
+      "demoBoundary": "一份实测记录：每一项给出命令、现象、结论；失败项附原始报错",
+      "scopeNotes": "这是 M1 的唯一验收口径：直通的错误只在真客户端上暴露。",
+      "blockedBy": ["S6", "S7"],
+      "techGuidance": null
     },
     {
       "id": "S9",
-      "title": "OpenAI codec：chat/completions 解析 + chunk 生成 + include_usage",
-      "covers": ["D1", "RISK-03", "OPEN-05"],
+      "title": "运行日志：内存环形缓冲 + 日志页",
+      "covers": ["D2", "D5", "FORBIDDEN-06"],
       "tasks": [
-        "/v1/chat/completions → CanonicalRequest",
-        "CanonicalRequest → OpenAI 出站请求：上游为 OpenAI 协议时带 stream_options.include_usage，否则拿不到 usage",
-        "上游 chunk 帧 → CanonicalDelta（含 finish_reason 映射）",
-        "CanonicalDelta → chat.completion.chunk 序列 + data: [DONE]",
-        "OpenAI 形状的 401 / 错误体",
-        "golden fixture 测试"
+        "内存环形缓冲（有上限），一行一请求：时间、代理密钥指纹、上游、模型、状态、首字节耗时、中止原因",
+        "写入器只接受 ProxyKeyFingerprint",
+        "日志页：只读列表",
+        "测试：日志行里搜不到代理密钥明文与真实 Key"
       ],
       "executionFit": "fits-one-run",
-      "demoBoundary": "fixture 回放产出自洽 chunk 流，末 chunk 携带 usage",
-      "scopeNotes": "与 S8 严格平行，两者之间不得有任何编译期引用（FORBIDDEN-01）。⚠ 整个故事可能因 OPEN-05 被删：双向矩阵是被 D1 选型带进来的，至今无『首期真有非 Claude Code 入站客户端』的证据。开工前先问一次。",
-      "blockedBy": ["S4"],
+      "demoBoundary": "跑一次请求，日志页恰好多一行，且只有指纹",
+      "scopeNotes": "统计、图表、成本、请求体、响应内容都不做；重启清空。",
+      "blockedBy": ["S6"],
       "techGuidance": null
     },
     {
       "id": "S10",
-      "title": "ToolCallSession：跨协议 tool_use 增量重编码（核心难点）",
-      "covers": ["D4 tool_use 双向", "findings §6"],
+      "title": "发布形态（OPEN-11）",
+      "covers": ["OPEN-11", "D5"],
       "tasks": [
-        "OpenAI 扁平分片累积：index 定位、首片带 id+name、后续只追加 arguments、无结束标记",
-        "决定何时敢发 content_block_start（必须等 name 到齐）",
-        "text 块与多个并行 tool_use 块的 index 共存与严格配对",
-        "收尾：finish_reason=tool_calls / [DONE] 时补 content_block_stop，并定下未完成 JSON 的处置策略",
-        "反方向：Anthropic tool_use → OpenAI tool_calls 分片",
-        "golden fixture：录制的真实分片流双向回放"
+        "实测两种产物：依赖框架（目标机需装 ASP.NET Core + WindowsDesktop 两个运行时）与自包含单文件——体积、启动时间",
+        "把两组数字给你选（\"轻量\"的取舍由你定），同时问一次要不要开机自启",
+        "按选定方式写发布配置与一页安装说明",
+        "在发布目录直接启动验证"
       ],
       "executionFit": "fits-one-run",
-      "demoBoundary": "一段真实录制的 OpenAI tool_calls 分片流 → 合法 Anthropic 块序列，index 全程配对",
-      "scopeNotes": "单独成故事，因为这是『一种协议根本没有、另一种强制要求』的信息，不是接口不匹配。S7 若证明客户端对 index 乱序敏感，本故事验收当场加严。",
-      "blockedBy": ["S8", "S9"],
+      "demoBoundary": "一个可直接运行的发布产物 + 安装说明",
+      "scopeNotes": "数字出来之前不预设答案。",
+      "blockedBy": ["S8"],
       "techGuidance": null
     },
     {
       "id": "S11",
-      "title": "Providers + CredentialInjector：真实 Key 的唯一出口",
-      "covers": ["D7", "脊柱②", "FORBIDDEN-06/07/09", "OPEN-07"],
+      "title": "翻译：请求方向（M2）",
+      "covers": ["D1", "D4", "RISK-03", "RISK-05"],
       "tasks": [
-        "UpstreamClients：BaseUrl + 鉴权头形态差异（Authorization: Bearer vs x-api-key + anthropic-version）",
-        "上游 HTTPS 响应流 → 原始帧 IAsyncEnumerable",
-        "Hosting 用 AddHttpMessageHandler 把 CredentialInjectingHandler 挂进 Providers 的 HttpClient 管道；Providers 只在请求选项里设 provider id，代码不经手明文、也不知道注入器存在（定稿 H）",
-        "实测：IHttpClientFactory 自带的请求日志处理器排在注入器内侧，确认它记录的 Authorization 值被打码；没打码就显式配置打码并加测试（默认行为未核实，不能假设）",
-        "启用 S2 里『DPAPI 解密调用点计数 == 1』那条验收",
-        "本地 stub HttpMessageHandler 测试，全程不碰网络",
-        "OPEN-07：第一个真实 Provider（DeepSeek or OpenAI）需要他给 Key"
+        "Anthropic 请求 → chat/completions：system、messages（文本 / 图片 / tool_use / tool_result）、tools、tool_choice、stop_sequences、max_tokens",
+        "带 stream_options.include_usage；thinking 丢弃（D4）",
+        "非流式响应翻译回 Anthropic message",
+        "翻译路径上 count_tokens 直接 404（客户端会按字符估算）",
+        "无状态单例，每请求状态放上下文对象",
+        "golden fixture 测试"
       ],
       "executionFit": "fits-one-run",
-      "demoBoundary": "一次 grep/测试证明全工程解密调用点恰好 1 处；Providers 单测零网络",
-      "scopeNotes": "Providers 的 Ce 已经降到 1（只剩 Core），别在实现时把它抬回去。",
-      "blockedBy": ["S5"],
-      "techGuidance": "这条故事守的是 D6 整个机制成立与否的唯一判据：真实 Key 明文的出现面 = 1 个节点 + 1 条边。"
+      "demoBoundary": "fixture：一个带工具定义的 Anthropic 请求翻译成合法的 chat/completions 请求，非流式响应翻译回合法 Anthropic message",
+      "scopeNotes": "只对 OpenAI 上游生效；Anthropic 兼容上游永远走直通。",
+      "blockedBy": ["S6"],
+      "techGuidance": null
     },
     {
       "id": "S12",
-      "title": "ProxyKeyAuthenticator：每请求现查哈希 + 按路径判定的 401 形状",
-      "covers": ["D6", "D8", "D10", "DECIDED-01", "RISK-02"],
+      "title": "翻译：流式与工具调用增量重编码（M2 核心难点）",
+      "covers": ["D4", "RISK-03", "findings §6"],
       "tasks": [
-        "SHA-256 + FixedTimeEquals + enabled 位；零可变状态 Singleton",
-        "每请求现查库，不加任何缓存",
-        "401 错误体按路径判形状（/v1/messages→Anthropic，/v1/chat/completions→OpenAI），不按客户端头",
-        "代理密钥生成端：高熵随机、只在生成时回显一次",
-        "契约测试：两种 401 形状",
-        "集成测试：吊销后下一个请求必须 401"
+        "OpenAI chunk → message_start / content_block_start|delta|stop / message_delta / message_stop",
+        "tool_calls 分片累积：等 name 到齐再发 content_block_start；文本块与多个并行工具块的索引严格配对",
+        "finish_reason / [DONE] 收尾补 content_block_stop；定下未完成 JSON 的处置策略",
+        "message_delta 合成结构合法的 usage",
+        "用录制的真实分片流做 golden fixture 回放",
+        "真 Claude Code 接 OpenAI 上游跑一次工具调用"
       ],
       "executionFit": "fits-one-run",
-      "demoBoundary": "吊销一个密钥，紧接的下一个请求即 401，无需重启",
-      "scopeNotes": "鉴权器对 Security 零依赖由 S2 的测试守，不在本故事重复。",
-      "blockedBy": ["S5", "S6"],
-      "techGuidance": "裸 SHA-256 无盐在此是正当的（密钥由程序生成、非人写口令）。这个理由要留在代码注释附近，否则将来一定有人升级成 PBKDF2 并给 enabled 检查加一笔派生开销。缓存会把『吊销即刻生效』变成假话且不触发任何测试失败。"
+      "demoBoundary": "一段真实录制的 tool_calls 分片流 → 合法 Anthropic 块序列，索引全程配对；Claude Code 在 OpenAI 上游上完成一次读写文件",
+      "scopeNotes": "这是\"一种协议没有、另一种强制要求\"的信息，不是接口不匹配。需要你提供 OpenAI Key。",
+      "blockedBy": ["S11"],
+      "techGuidance": null
     },
     {
       "id": "S13",
-      "title": "RouteResolver + 全局激活快照（D7 落地）",
-      "covers": ["D7", "findings §4.1"],
+      "title": "文档状态迁移：target → current",
+      "covers": ["维护约定"],
       "tasks": [
-        "只读 IActivationState，不查库",
-        "入站 model 字段（可能是客户端硬编码模型名）→ 真实 (Provider, model)",
-        "无激活档 / 无匹配 → 按入站协议形状报错",
-        "ActivationState 实现：不可变快照 + Volatile.Read / Interlocked.Exchange 整体替换",
-        "测试：切换快照时进行中的请求仍用旧快照，新请求用新快照"
+        "已落地组件在 DSL 描述里标 current，evidence.md 补真实 文件:行",
+        "violations.csv 按实测关闭 OPEN / RISK 行",
+        "重新过一遍 structurizr validate，重渲两张 DOT"
       ],
       "executionFit": "fits-one-run",
-      "demoBoundary": "一条测试证明切换原子可见：无撕裂读、无需重启",
-      "scopeNotes": "剩下的真问题是内存可见性而不是依赖方向。",
-      "blockedBy": ["S12"],
-      "techGuidance": "若实现时觉得『在鉴权器里顺手把 RouteProfile 对应的真实 Key 也取出来』很合理——那就是 §4.4 那条后门边，FORBIDDEN-07 会红。"
-    },
-    {
-      "id": "S14",
-      "title": "端到端管道：StreamRelay + HttpEndpoints（Flush、中止、错误透传）",
-      "covers": ["脊柱①闭环", "RISK-06", "findings §4.2", "不做清单：重试/轮转"],
-      "tasks": [
-        "HttpEndpoints 按 (入站协议, 目标 Provider) 从工厂取那 4 件；唯一持 HttpContext 者",
-        "Write + 逐事件 Flush 只在端点，StreamRelay 保持纯变换",
-        "StreamRelay：上游帧 → CanonicalDelta → 入站事件；半截流终止",
-        "CancellationToken 传播到上游 HttpClient（RISK-06）",
-        "上游 429/5xx 按入站形状原样透传，且不进日志",
-        "集成测试：客户端中途取消 → 断言上游被取消"
-      ],
-      "executionFit": "fits-one-run",
-      "demoBoundary": "假上游 + 真 SSE 客户端拿到完整合法事件序列；Ctrl+C 后上游连接被取消",
-      "scopeNotes": "全系统故障聚集点，也是唯一『只有真跑客户端才暴露』的一层。S7 的探针结论在这里兑现。",
-      "blockedBy": ["S8", "S9", "S10", "S11", "S13"],
-      "techGuidance": "方案 B 的红线：管道不碰 HttpContext。Flush 时机一旦下沉进 StreamRelay，纯变换就被污染成必须起 Kestrel 才能验证。"
-    },
-    {
-      "id": "S15",
-      "title": "UI：模型管理 + 一键切换 + 连通性测试",
-      "covers": ["D5 UI 四类之一/二", "FORBIDDEN-03/03b/08"],
-      "tasks": [
-        "Provider/Model 管理视图（录入真实 Key → Storage 加密）",
-        "一键切换：ViewModel 只写 IActivationState 端口",
-        "连通性测试按钮：打 /health + 一次最小上游 ping",
-        "ViewModel 不持有 string key 字段",
-        "请求路径禁 Dispatcher（RISK-07）"
-      ],
-      "executionFit": "fits-one-run",
-      "demoBoundary": "在 UI 录一个 DeepSeek Key、切激活档，Claude Code 立刻走它",
-      "scopeNotes": "『导出配置』这类功能本身就在不做清单里，不要顺手加。",
-      "blockedBy": ["S13", "S11"],
-      "techGuidance": null
-    },
-    {
-      "id": "S16",
-      "title": "UI：代理密钥管理（生成 / 撤销 / 禁用）",
-      "covers": ["D6", "D8"],
-      "tasks": [
-        "生成：高熵密钥，只在创建对话框里显示一次",
-        "列表只显示前缀指纹（ProxyKeyFingerprint 类型护栏）",
-        "撤销/禁用 = 翻 enabled 位",
-        "显式文案：忘了无法回显，只能重新生成并重填所有客户端（D8 的代价）"
-      ],
-      "executionFit": "fits-one-run",
-      "demoBoundary": "生成密钥→填进客户端→UI 点禁用→客户端立刻 401",
-      "scopeNotes": "代理密钥不是网络安全边界，是『撤销 + 防误操作』机制；UI 文案要按这个定位写，别写成『安全』。",
-      "blockedBy": ["S12"],
-      "techGuidance": null
-    },
-    {
-      "id": "S17",
-      "title": "RunLog：一行一请求 + 只记指纹",
-      "covers": ["D5 基础运行日志", "FORBIDDEN-06"],
-      "tasks": [
-        "写入器签名只接受 ProxyKeyFingerprint，不接受 string",
-        "一行/请求：时间、入站协议、状态、时延、上游、model、指纹",
-        "不落盘请求体与响应内容",
-        "日志视图（D5 第四类 UI）",
-        "测试：断言日志行不可能出现明文 Key"
-      ],
-      "executionFit": "fits-one-run",
-      "demoBoundary": "跑一次真实请求，日志恰好一行，且只有指纹",
-      "scopeNotes": "统计、图表、成本核算全部出局，一行能回答的问题不做一张图。",
-      "blockedBy": ["S14"],
-      "techGuidance": null
-    },
-    {
-      "id": "S18",
-      "title": "文档状态迁移：target → current，逐条闭环 OPEN/RISK",
-      "covers": ["维护约定", "UNKNOWN-01/02/03", "RISK-04"],
-      "tasks": [
-        "已落地组件在 DSL 里从 state=target 改 current，evidence.md 补 sourceRefs(文件:行)",
-        "violations.csv 按实测更新 UNKNOWN-01/02/03 与 RISK-04",
-        "OPEN-05（首期是否真有 OpenAI 协议入站客户端）给出结论或明确砍掉双向矩阵的入站侧",
-        "决定是否补 Structurizr CLI，把 .dsl 真过一遍解析器（本机目前只有 JDK 25 能跑它）",
-        "重渲两个 .dot 确认图仍合法"
-      ],
-      "executionFit": "fits-one-run",
-      "demoBoundary": "模型不再声明为 target-state；每条禁令都有对应测试或已标注例外",
-      "scopeNotes": "放在最后，但 OPEN-05 的判断值得在 S9 开工前就问他一次——它决定 S9 整条要不要做。",
-      "blockedBy": ["S14", "S15", "S16", "S17"],
+      "demoBoundary": "DSL 校验通过；每条禁令都有对应护栏或标注例外",
+      "scopeNotes": null,
+      "blockedBy": ["S9", "S10", "S12"],
       "techGuidance": null
     }
   ]

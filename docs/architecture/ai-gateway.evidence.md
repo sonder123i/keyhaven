@@ -1,133 +1,75 @@
-# 证据索引与假设登记 —— AI 本地代理网关
+# 证据索引与决策来源 —— AI 本地代理网关
 
-真相源：`ai-gateway.structurizr.dsl`。本文件说明每个节点/边凭什么存在。
-置信度定义沿用插件的 `architecture-evidence-model.md`：high / medium / low / unknown。
+真相源：`ai-gateway.structurizr.dsl`。本文件说明每条决策**出自谁、哪一轮**，以及每条外部事实的出处。2026-10-15 修订；旧版在 git `cc01023`。
+
+置信度：high = 你原话或你当面选定 / 官方文档；medium = 我的推断；low = 未核实。
 
 ---
 
-## 阶段一：代码库探索结论
+## 1. 你的原话（第 0 轮，原始需求，置信 high）
 
-| 探针 | 命令 | 结果 | 架构含义 |
-| --- | --- | --- | --- |
-| 会话工作区内容 | `ls -la C:/Users/k2767/Documents/Qoder/2026-10-14/a369e3b0` | `total 0`，完全为空 | ⚠️ 这是**会话工作区**，不是项目根。它曾是本模型六份资产的临时落盘处，现已移出 |
-| **项目根** | `ls -la E:/key` + 实写/删除探针 + `git rev-parse` | 存在但**空**；写探针成功；非 git 仓库；E 盘余量 138.1 GB | ✅ **项目根 = `E:\key`**。本目录 `E:\key\docs\architecture\` 即由会话工作区**移动**（非复制）而来，避免两处真相。待办：纳入版本控制需先 `git init` |
-| 项目知识 | `SearchKnowledge(mode=search)` | "No knowledge has been generated for the current workspace yet" | 无历史架构记忆，无需处理与旧文档的冲突 |
-| git 仓库 | 会话目录与 `E:\key` 双重探活 | **两者都不是仓库** | 无法用 `git log`/`git diff` 做变更证据；依赖分析只能建立在设计意图上 |
-| .NET SDK | `dotnet --list-sdks` | **空**；`C:\Program Files\dotnet\sdk` 不存在 | ⛔ **硬阻塞**：无法 `dotnet new/build`，DSL 里任何容器都无法实例化 |
-| .NET 运行时 | `dotnet --list-runtimes` | `Microsoft.NETCore.App 8.0.21 / 8.0.28`、`Microsoft.WindowsDesktop.App 8.0.28` | WPF 目标框架 `net8.0-windows` 的**运行时**已就位，只缺 SDK |
-| Graphviz | `command -v dot` | 无输出 | DOT 图未实渲，布局效果未验证 |
-| Node | `node -v` | v24.15.0 | 与本项目无关（C# 栈） |
+- 技术栈：C# / .NET 8（或最新）、WPF、内嵌 Kestrel、**"SQLite 或 JSON 加密存储"**。
+- 代理地址 `http://localhost:8000`；端点 **`/v1/messages` → `/v1/chat/completions`**；**必须支持 SSE 流式**；客户端包含 Claude Code。
+- 用 Windows DPAPI 加密 Key。
+- 上游点名：OpenAI / Claude / DeepSeek。
 
-**因为项目根为空，本模型没有任何 `current` 状态节点。** 这是阶段一最重要的结论，比图本身重要。
+## 2. 三轮决策
 
-## 阶段二：需求基线的证据来源
-
-D1–D4 全部来自 2026-10-14 的澄清问答（`AskUserQuestion`，用户当面选定），证据类型为 **human-assumption（架构意图）**，置信度 **high**（因为是决策本身而非推断），但**不来自代码**。
-
-| ID | 决策 | 来源 | 置信 | 是否可逆 |
+| 轮次 | 日期 | 决策 | 怎么定的 | 备注 |
 | --- | --- | --- | --- | --- |
-| D1 | 双向矩阵 Anthropic + OpenAI | 用户选定「双向矩阵（推荐）」 | high | 可逆，但会退化 codec 层 |
-| D2 | DPAPI + SQLite 单库 | 用户选定「DPAPI + SQLite 单库（推荐）」 | high | **半可逆**：见 OPEN-02 |
-| D3 | 同进程内嵌 Kestrel | 用户选定「同进程内嵌 Kestrel（推荐）」 | high | 可逆，代价 = `ActivationState` 改 IPC（影响半径表：大） |
-| D4 | MVP 仅 tool_use / function calling 双向 | 用户在该多选题**只勾了这一项** | high | 可逆（加东西便宜） |
-| **D5** | 轻量 / 极简 / 纯本地；UI 只保留 模型管理·代理密钥管理·一键切换·基础运行日志；拒绝统计图表·多用户·云同步 | 用户 2026-10-14 **第二轮补充陈述**（证据类型：user-statement） | high | 可逆，但方向是"再加东西"，与定位冲突 |
-| **D6** | 代理密钥机制：真实 Key 本地 DPAPI+SQLite；UI 生成代理密钥；入站验代理密钥 → 内存替换真实 Key → 转发 | 用户 2026-10-14 **第二轮补充陈述**（证据类型：user-statement） | high | **半可逆**：哈希方案与"能否回显"一旦写入第一条记录即固化 |
-| **D7** | 路由全部来自全局激活档，代理密钥不含路由信息 | 用户第二轮澄清选定（推荐档） | high | 代价：所有入站客户端共享同一当前模型，**不能同时用不同模型** |
-| **D8** | 代理密钥只存不可逆 SHA-256，生成后不可回显 | 用户第二轮澄清选定（推荐档） | high | 代价：忘了只能重新生成 + 重填全部客户端配置；固化点已跨越 |
-| **D9** | 监听地址写死 `127.0.0.1`，只有端口可在 UI 改 | 用户第二轮澄清选定（推荐档） | high | 代价：放弃跨机共享这条产品可能 |
-| **D10** | 失败防护只做 `FixedTimeEquals`，无计数/退避/锁定 | 用户第二轮澄清选定（推荐档） | high | 代价：一旦将来开放 LAN，此档不足以应对外部猜解 |
+| 1 | 10-14 | D1 双向矩阵、D2 SQLite 单库、D3 同进程 Kestrel、D4 MVP 只含 tool_use | 上一个模型出选项，你选了标"（推荐）"的项 | **D1、D2 的推荐项比你的原话更重**（原话单向、"SQLite 或 JSON"），第 3 轮已修订 |
+| 2 | 10-14 | D5 轻量极简纯本地、D6 代理密钥机制 | 你的补充陈述 | **D5 出现在 D1/D2 之后，但 D1/D2 从没按它复核** |
+| 2 | 10-14 | D7 全局路由、D8 只存哈希、D9 写死回环、D10 只做定时比较 | 你选推荐档（均为最轻档） | 保留 |
+| 3 | 10-15 | D12 注入器 = 管道处理器（H） | review 后你选定 | 我先推荐过"公共端口"接法，随后自我推翻 |
+| 3 | 10-15 | **D1 修订**：只收 Anthropic 入站，出站直通 + 翻译 | review 后你选推荐项 | 推荐项已对照原话收窄，不是扩大 |
+| 3 | 10-15 | **D2 修订**：JSON + DPAPI 字段，日志只在内存 | 同上 | 同上 |
+| 3 | 10-15 | D11 3+1 个项目 | 同上 | |
+| 3 | 10-15 | D14 M1 = DeepSeek 直通 | 同上 | |
+| 3 | 10-15 | D13 `IRealKeyVault` 只写；DECIDED-01 修订为写入即替换内存快照 | review 结论 | 推理见 `findings` §4 与 `understanding` §5 |
 
-**D4 与 D5 有一处正面冲突并已按 D5 解决**：D4 让"请求日志 + token/成本统计"出局，D5 又把"基础运行日志"列为 UI 四类核心之一。我的处理是**拆开**：`runLog`（一行一请求、只记指纹）回归 MVP，**统计图表 / 成本核算 / 请求体响应内容**留在不做清单。这是我做的取舍，不是用户明示的 —— 若理解错，请指出（`UNKNOWN-03`）。
+**一条教训**：你几乎总是选标了推荐的那一项，所以**推荐项就是决定**。第 1 轮的偏重推荐原样进入了架构；第 3 轮的推荐都已逐条对照你的原话，只往原话方向收。
 
-原始请求文本里另外三条是**用户直接陈述**（证据类型 document/user-statement，置信 high）：
-- 技术栈 C# / .NET 8（或最新）、WPF、内嵌 Kestrel、SQLite 或 JSON 加密存储
-- 代理服务地址形态 `http://localhost:8000`，端点 `/v1/messages` → `/v1/chat/completions`，**必须支持 SSE 流式**，客户端包含 Claude Code
-- 需使用 Windows DPAPI 加密 Key
+## 3. 外部证据（2026-10-15 当场获取）
 
-## 节点证据与置信度
-
-### 高置信（用户直接陈述）
-`gateway`、`appExe`、`configDb`、`dpapi`、`httpEndpoints`(端点名)、`anthropicCodec`、`openAiCodec`、`canonicalModel`、`streamRelay`(SSE 要求)、`secretProtector`(DPAPI 要求)、`claudeCode`、`operator`。
-
-### 中置信（由协议规范推导，非用户陈述）
-| 节点 | 凭什么 | 为何不是 high |
-| --- | --- | --- |
-| `toolCallBridge` | Anthropic `tool_use` 块生命周期 vs OpenAI 分片 `tool_calls` 的语义差 | 用户勾了 tool_use 双向，但"需要一个独立组件"是我的推断 |
-| `routeResolver` | 请求体 `model` 字段与真实 Provider 模型名必然不一致 | 推断自协议形状，用户未提"路由" |
-| `activationState` | D3（同进程）的直接后果 | 推断，非明示 |
-| `httpEndpoints` 里的 `/v1/messages/count_tokens` | Claude Code 实际会调用它 | ⚠️ **未经实测**，见 OPEN-04 |
-
-### D6 派生节点：机制是用户明示，实现细节是我推的
-
-这点必须分开写，否则图会比文本显得更确定：
-
-| 内容 | 置信 | 凭什么 |
-| --- | --- | --- |
-| 「验代理密钥 → 内存替换真实 Key → 转发」这条链路 | **high** | 用户明示（D6 原文） |
-| UI 支持生成代理密钥 | **high** | 用户明示 |
-| 代理密钥**用单向哈希存储**、生成后**不可回显** | **high（D8 已决）** | 第二轮澄清选定「只存哈希，不可回显（推荐）」 |
-| 裸 SHA-256、**无盐、不用慢哈希** | **medium（我的推理，用户未明说）** | D8 选了哈希，但"无盐是否可接受"是我给的论证：密钥由程序生成、高熵随机，不存在离线猜解面。若你不同意这条论证，加盐只需多一列，不影响任何其他组件 |
-| 比对使用 `CryptographicOperations.FixedTimeEquals` | **high（D10 已决）** | 第二轮澄清选定「只做定时安全比较（推荐）」 |
-| 鉴权器**零可变状态**：无失败计数、无退避、无锁定 | **high（D10 已决）** | 同上。连带好处：天然满足 `RISK-05` 的无状态要求 |
-| 鉴权器与注入器**拆成两个组件** | **medium（我的判断，用户未要求）** | 用户说的是"验证并替换"，一句话本可对应一个中间件。拆开的理由在脊柱②。**若你认为这算过度设计可以合并** —— 但合并后 `FORBIDDEN-07` 消失，暴露面从 1 处变成"整个请求管道" |
-| 运行日志**只记前缀指纹** | **medium（我的补强）** | D5 要日志 + D6 有密钥 ⇒ 日志是泄露面。这条是我补的约束，用户未提 |
-| **每请求现查哈希、不加内存缓存** | **medium（我的推导）** | 由「吊销要即刻生效」推出；用户未提。已作为 `DECIDED-01` 登记，因为它是**加了就静默失效**的那类约束 |
-| `/health` 免鉴权 | **low（我的建议）** | 为方便 UI 自检端口活着。按 D9 之后仍有价值，但**可删** |
-| 路由**不**读密钥属性 | **high（D7 已决）** | 第二轮澄清选定「全部跟随全局激活档（推荐）」 |
-| 监听地址**写死**回环、只有端口可改 | **high（D9 已决）** | 第二轮澄清选定「只绑 127.0.0.1，端口可改（推荐）」 |
-
-### 低置信 / 已标 `LowConfidence`
-| 节点 | 状态 | 说明 |
-| --- | --- | --- |
-| `openAiClient`（入站 OpenAI 协议客户端） | **inferred** | 被 D1 的"双向矩阵"带进来，但没有任何证据表明首期存在这类客户端。若无，则 L1 侧只有 `claudeCode` |
-| `viewModels` 的 `CommunityToolkit.Mvvm` | **选型待定** | 用户未指定 MVVM 框架 |
-| `repositories` 的 `Dapper 或 EF Core` | **选型待定** | 用户只说"SQLite"。见 OPEN-03 |
-| `failoverPolicy` | **Phase 2** | D4 已出局且进不做清单 |
-| `runLog` 的 MVP 归属 | **已由 D5 提回 MVP** | 原名 `requestAudit`（含统计/成本，Phase 2）已重命名并收窄为"一行一请求 + 只记指纹"，统计/成本仍在不做清单 |
-
-### 无 code 证据的通用声明
-本模型 `sourceRefPolicy = design-intent`：所有 `sourceRefs` 都是**未来文件的意图位置**（例如 `AiGateway.Mapping.Anthropic/AnthropicEventWriter.cs`），**当前不可解析**。这与插件里"教学用 illustrative 模型"同类，不是现状证据。代码落地后需逐节点补真实 `file:line` 并把 `target` 改 `current`。
-
-## 边证据
-
-| 边集 | 类型 | 置信 | 依据 |
+| 事实 | 出处 | 获取方式 | 置信 |
 | --- | --- | --- | --- |
-| `claudeCode → gateway`（/v1/messages + SSE） | runtime-call, HTTP/SSE | high | 用户明示"Claude Code 等客户端使用" |
-| `gateway → openAiApi / anthropicApi` | runtime-call, HTTPS | high | 用户明示 OpenAI/Claude/DeepSeek |
-| `appExe → configDb` | data-access, SQL | high | D2 |
-| `secretProtector → dpapi` | runtime-call, P/Invoke | high | 用户明示 DPAPI |
-| codec → canonicalModel | compile-time | medium | 由 D1 的"两段式避免 N×M"推出；用户接受了我的选项说明 |
-| `Hosting → 具体 codec` | config-wiring | medium | .NET DI 惯例推断 |
-| `Providers → 远端 API` | runtime-call, HTTPS | **high（且刻意红色标注）** | 这是全图**唯一**该携带真实 Key 的边。`request-flow.dot` 里它是唯一的 `penwidth=3` 红边，DOT 与不变式 `guard` 节点共同指向这一条 |
-| `ProxyKeyAuth → repositories` | compile-time（取哈希） | high 机制 / medium 细节 | D6 明示要验证；但"查哈希"而非"查密文"是我的选择（`OPEN-09`） |
-| `CredInjector → Providers` | in-process（写鉴权头） | medium | 拆成独立注入点是我的判断，非用户明示（见上表 D6 派生节点） |
-| `HttpEndpoints → Db`（红色） | **forbidden-edge** | n/a | `FORBIDDEN-05/08`，画出来只为被测试拦 |
-| `ProxyKeyAuth → Security`（红色） | **forbidden-edge** | n/a | `FORBIDDEN-07`，D6 新增，防"顺手取真实 Key"这条后门边 |
-| `RunLog → Security`（红色） | **forbidden-edge** | n/a | `FORBIDDEN-06`，D5 与 D6 交叉点上新增 |
-| `AnthropicCodec → OpenAiCodec`（红色） | **forbidden-edge** | n/a | 画出来是为了被架构测试拦截，**不代表存在** |
+| 网关必须转发 `anthropic-version`（去掉会坏）与 `anthropic-beta`（去掉可能 400） | https://code.claude.com/docs/en/llm-gateway-protocol | WebFetch 摘要（旧址 docs.anthropic.com/en/docs/claude-code/llm-gateway 301 跳转到 code.claude.com） | high（官方），但为摘要非逐字 |
+| 推理请求发往 `/v1/messages?beta=true` | 同上 | 同上 | 同上 |
+| `count_tokens` 可选，缺失时 Claude Code 按字符估算上下文 | 同上 | 同上 | 同上 |
+| `ANTHROPIC_AUTH_TOKEN` → `Authorization`；`ANTHROPIC_API_KEY` → `x-api-key`；`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` 可关预发布能力 | 同上 | 同上 | 同上 |
+| DeepSeek `https://api.deepseek.com/anthropic`：thinking 支持（忽略 budget_tokens）、tools / tool_choice / 图片支持、`anthropic-beta` 与 `cache_control` 忽略、未知模型名映射到默认模型；文档未提 `count_tokens` | https://api-docs.deepseek.com/guides/anthropic_api | WebFetch 摘要 | high（官方），摘要 |
+| cc-switch：14.4 万星、2026-10-14 有推送、Windows 原生；本机路由 `127.0.0.1:15721`、格式转换、配置里只写占位密钥 `PROXY_MANAGED`、热切换、故障转移；数据在 `~/.cc-switch/cc-switch.db`（SQLite） | https://github.com/farion1231/cc-switch README 第 344、363、484、511–513 行 | `gh api` 取 README 原文 + 关键词检索 | high |
+| cc-switch 是否加密存 Key、本机路由是否校验占位密钥 | 同仓库源码与 `docs/user-manual/en/4-proxy/` | **未查** | low |
+| claude-code-router：3.8 万星，Anthropic⇄OpenAI 等多协议翻译 | https://github.com/musistudio/claude-code-router | `gh api` | high |
+| 旧 DSL 在第 229 行（元素样式 `dashed true`）解析失败 | Structurizr CLI v2025.11.09 `validate` | 本机实跑 | high |
 
-## 开放问题（阶段四开工前需要决）
+## 4. 节点置信度
 
-| ID | 问题 | 为什么现在不能定 | 便宜的决法 |
-| --- | --- | --- | --- |
-| OPEN-01 | 入站 `thinking` 配置怎么处理：丢弃 / 透传给原生 Anthropic Provider / 报错？ | D4 让 thinking 出局，但 Claude Code 会发这个字段，不能"没有" | 先定"透传给原生 Anthropic、其余丢弃并回一条警告日志"，实现时再验 |
-| OPEN-02 | DPAPI 密文的**迁移与识别**：secret 表是否需要 `protector_id` + `key_version`？ | 一旦写入第一行 DPAPI 密文，事后补列能救，但事后**没有旧密文的来源标记**就救不了 | **现在就加两列**，成本几乎为零 —— 这是本表里唯一"现在不做以后贵"的项 |
-| OPEN-03 | Dapper vs EF Core | 纯实现选型，不影响 L3 边界（`repositories` 端口不变） | 一次 2 小时 spike 决出，别赌 |
-| OPEN-04 | Claude Code 对 `count_tokens` 的依赖强度 | 需要真实客户端实测 | 装好 SDK 后第一件事就是拿真 Claude Code 打一次探针 |
-| OPEN-05 | 入站是否真需要 OpenAI 协议（D1 的双向是否被用满） | 无使用证据 | 若确定不要，`openAiCodec` 的**入站侧**可砍，出站侧保留 |
-| OPEN-06 | 端口 8000 冲突与 LAN 暴露开关 | — | **已决（D9）**：地址写死回环、无 LAN 开关，端口可在 UI 改 |
-| OPEN-07 | 首个要接的真实 Provider 是 DeepSeek 还是 OpenAI | 影响 `upstreamClients` 的 profile 形态优先级 | 与 OPEN-04 同批实测 |
-| OPEN-08 | 代理密钥是否各自钉死一个模型 | — | **已决（D7）**：路由全部来自全局激活档。接受代价：多客户端不能同时用不同模型 |
-| OPEN-09 | 代理密钥生成后能否事后回显 | — | **已决（D8）**：只存不可逆 SHA-256，不可回显。接受代价：忘了就重新生成 |
-| OPEN-10 | 鉴权失败是否退避/锁定 + 监听范围 | — | **已决（D10 + D9）**：只做 `FixedTimeEquals`；地址写死回环 |
+| 节点 | 置信 | 依据 |
+| --- | --- | --- |
+| Claude Code、DPAPI、Kestrel、SSE、两类上游 | high | 原话 |
+| 直通转发器 | high | 原话点名的上游里两家原生说 Anthropic 协议（§3） |
+| 翻译器、工具调用增量重编码 | high（机制）/ medium（拆成两个组件） | 原话"→ /v1/chat/completions"；拆分是我的判断 |
+| 代理密钥验证器与注入处理器分开 | medium | 你说"验证并替换"；拆开是为了让失败路径碰不到解密 |
+| 激活快照、路由解析 | medium | D3、D7 的直接推论 |
+| 托盘常驻 | medium | D3 的推论：关窗即断 |
+| 本机不受信来源（威胁方） | medium | 浏览器访问回环端口的常识；Chrome 正在收紧，未逐浏览器核实 |
+| 运行日志只在内存 | high | D2 修订 |
 
-> 第二轮澄清把代理密钥机制带来的三条语义分叉全部收敛到**最轻档**，且四题一致选推荐项 —— 说明「轻量」这条定位是真实的决策约束，不只是口号。剩下的 OPEN-01～05、07 全是**需要实测或需要一次 spike** 的技术问题，不再有需要替你做主的产品判断。
+## 5. 开放问题
 
-## 本模型刻意不知道的事（不画成通路）
+| ID | 问题 | 状态 |
+| --- | --- | --- |
+| OPEN-01 | 入站 `thinking` 怎么处理 | **已决**：直通原样携带；翻译路径丢弃（D4） |
+| OPEN-02 | DPAPI 密文的来源标记 | **已决**：`protector_id` + `key_version` 进 JSON 结构（计划 S2） |
+| OPEN-03 | Dapper vs EF Core | **作废**：D2 改 JSON，无 ORM |
+| OPEN-04 | `count_tokens` 依赖强度 | **已决**：官方文档写明可选（§3） |
+| OPEN-05 | 是否需要 OpenAI 协议入站 | **已决**：不需要（D1 修订） |
+| OPEN-07 | 首个上游 | **已决**：DeepSeek 直通（D14）；需要你提供 DeepSeek Key |
+| OPEN-11 | 发布形态：依赖框架（目标机需装 ASP.NET Core + WindowsDesktop 两个运行时）还是自包含（体积大） | **开着**：计划 S10 实测两种产物体积后由你选 |
+| OPEN-12 | DeepSeek 是否接受 `?beta=true`、是否支持 `count_tokens`、错误体是否回显 Key | **开着**：M1 验收实测（计划 S8） |
+| OPEN-13 | IHttpClientFactory 自带日志处理器是否给鉴权头打码 | **开着**：计划 S5 实测，默认行为未核实 |
 
-- OAuth / Claude Pro-Max 订阅制接入 —— 未提，未画。
-- 多用户 / 团队协作 / 配置云同步 —— DPAPI 与"跨机同步"天然冲突，属未探测区，且已进不做清单。
-- **局域网多机共享 —— 已按 D9 明确排除（不是"还没做"，是不做）**：监听地址写死回环。
-- Windows 服务/开机自启形态 —— D3 选了同进程 GUI，服务形态与之冲突，未探测。
-- 上游响应的**非流式**路径细节（`stream: false`）—— 结构上存在，但未展开。
-- Claude Code 的具体版本与其请求体的真实字段集合 —— **未实测，OPEN-04**。
+## 6. 刻意不画的东西
+
+OAuth / Claude 订阅接入、多用户、云同步、局域网共享、Windows 服务形态、开机自启（托盘常驻已覆盖"别关窗即断"；自启要不要，S10 再问你）。

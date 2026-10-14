@@ -1,27 +1,29 @@
 rule_id,severity,from,to,edge_type,reason,detection,confidence,note
-FORBIDDEN-01,HIGH,AiGateway.Mapping.Anthropic,AiGateway.Mapping.OpenAI,compile-time,任一方向互引都会把 2+2 的适配器数量变成 N×M 专用转换器,ArchUnitNET 断言 + 项目引用审查,high,target-state 规则（尚无代码）
-FORBIDDEN-01b,HIGH,AiGateway.Mapping.OpenAI,AiGateway.Mapping.Anthropic,compile-time,与 FORBIDDEN-01 对称,同上,high,target-state
-FORBIDDEN-02,HIGH,AiGateway.Core,AiGateway.Gateway|Mapping|Providers|Storage|Security|App,compile-time,内核反向依赖会失去可测性并把 IO 拖进规范模型,Core 项目零 ProjectReference + CI 断言,high,target-state
-FORBIDDEN-03,MEDIUM,AiGateway.App.ViewModels,AiGateway.Storage,compile-time,UI 直连仓储将诱发 App↔Gateway/Storage 的程序集环（.NET 编译期硬性 CS0146）,ArchUnitNET,high,target-state
-FORBIDDEN-03b,MEDIUM,AiGateway.App.ViewModels,AiGateway.Security,compile-time,同上；明文 Key 一旦进入 ViewModel 字段就难以保证不外泄到日志,ArchUnitNET + 禁止 ViewModel 持有 string key,medium,target-state
-FORBIDDEN-04,MEDIUM,AiGateway.Gateway.StreamRelay,AiGateway.App.ViewModels,compile-time,管道回调 UI 会形成 runtime 环；UI 通知必须走事件/Flow 单向出站,ArchUnitNET,high,target-state
-FORBIDDEN-05,MEDIUM,AiGateway.Gateway.HttpEndpoints,gateway.db,direct-sql,端点绕过仓储直连库会让加密/迁移逻辑出现两处真相,代码审查 + 禁止 Gateway 引用 Microsoft.Data.Sqlite,medium,target-state
-FORBIDDEN-06,HIGH,AiGateway.Gateway.RunLog,AiGateway.Security,data-leak,日志侧一旦能取到真实 Key，"一行日志"就成了密钥外泄通道；运行日志只允许记代理密钥前缀指纹,日志写入签名只接受指纹类型 + 架构测试禁止 RunLog 依赖 Security,high,target-state 新增
-FORBIDDEN-07,HIGH,AiGateway.Gateway.ProxyKeyAuthenticator,AiGateway.Security.SecretProtector,privilege-creep,鉴权器若能解密真实 Key，则 401 失败路径与解密路径合并进同一组件，越权面变大,鉴权与注入拆两组件 + 架构测试禁止 ProxyKeyAuth 依赖 Security,high,target-state 新增
-FORBIDDEN-08,MEDIUM,AiGateway.App.ViewModels,gateway.db,direct-sql,UI 直连库读密文会绕开 secretProtector 这一处解密审计口,UI 只经 repositories 端口,medium,target-state 新增
-FORBIDDEN-09,HIGH,AiGateway.Security.CredentialInjector,远端 API,runtime-call,注入器自己发请求会让真实 Key 出现第二条外发路径；它只该改经过它的请求头，由 Providers 统一出口（2026-10-15 定稿 H：注入器是 Hosting 装配进 Providers HttpClient 管道的 DelegatingHandler）,ArchUnitNET：Security 允许依赖 DelegatingHandler 与 HttpRequestMessage 的头部；禁止依赖 HttpClient / HttpMessageInvoker 的发送入口 / IHttpClientFactory / SocketsHttpHandler / HttpClientHandler；禁止构造 HttpRequestMessage；Security 与 Providers 互不引用,high,target-state 新增；检测规则 2026-10-15 由"禁止引用 System.Net"改为精确意图
-RISK-01,HIGH,gateway.db,Windows DPAPI,data-protection,DPAPI 密文仅同机同用户可解；换机/换账户/重置密码导致已存 Key 全部不可读,schema 需 protector_id + key_version 列,high,单向门——必须在写第一行数据前决定
-RISK-02,HIGH,AiGateway.Gateway.ProxyKeyAuthenticator,LAN interface,binding-scope,代理密钥把"同网段白嫖"从必然降为需先拿到密钥，但仍三件事未闭环：① 监听 127.0.0.1 还是 0.0.0.0 ② 鉴权失败是否退避/锁定（防在线爆破）③ 哈希算法与是否加盐,默认 127.0.0.1；LAN 需显式开关；②③ 属待澄清决策,high,已因代理密钥机制改写——不再是"无鉴权区"
-RISK-03,HIGH,AiGateway.Gateway.StreamRelay,upstream SSE,semantic-gap,OpenAI 流默认不返回 usage；不发 stream_options.include_usage 则 Anthropic message_delta 的 usage 只能瞎猜,契约测试断言最后 chunk 携带 usage,high,易漏项
-RISK-04,MEDIUM,AiGateway.Gateway.HttpEndpoints,/v1/messages/count_tokens,endpoint-coverage,Claude Code 会调用该端点；未实现会导致客户端在长上下文时直接报错,返回估算值即可但必须存在,medium,待实测确认
-RISK-05,MEDIUM,AiGateway.Mapping.* (stateless),per-request buffer,lifetime,codec 若持有实例字段做累积，多会话并发会互相串流；DI 必须注册为 Singleton 无状态实现 + 每请求上下文对象,架构测试禁止 codec 类的可变实例字段,medium,target-state
-RISK-06,MEDIUM,AiGateway.Gateway,HttpProtocol.RequestAborted,cancellation,客户端中止未传播到上游 HttpClient 会造成连接泄漏与远端继续计费,集成测试用 CancellationTokenSource 取消并断言上游被取消,high,target-state
-RISK-07,MEDIUM,AiGateway.App,WPF Dispatcher,threading,请求线程回调 Dispatcher 会与 Kestrel 形成死锁,禁止请求路径调用 Dispatcher.Invoke/InvokeAsync,medium,target-state
-UNKNOWN-01,LOW,AiGateway.Storage,Dapper vs EF Core,tech-choice,尚无代码证据；SQLite+DPAPI 单库下 Dapper 更轻但迁移需自管,阶段 4 前用一次 spike 决出,low,开放决策
-UNKNOWN-02,MEDIUM,inbound OpenAI protocol clients,,scope,双向矩阵已确认(D1)，但"首期是否真有非 Claude Code 的入站客户端"仍无使用证据——它是被选型带进来的,需求确认,medium,待澄清
-UNKNOWN-03,MEDIUM,thinking 透传 / 故障转移 / 请求日志,,scope,请求日志已按补充需求以"基础运行日志"形态回归 MVP；thinking 与故障转移仍按 D4 出局但 Claude Code 会发 thinking 字段,需求确认,medium,范围已部分收窄
-UNKNOWN-04,CLOSED-D7,ProxyKey ⇄ RouteProfile 绑定语义,,data-model,【已决】路由全部来自全局激活档，密钥不含路由信息；代价=所有入站客户端共享同一当前模型，不能同时用不同模型,已写入 DSL/DOT；routeResolver 不得依赖 Storage,high,已决 2026-10-14
-UNKNOWN-05,CLOSED-D8,代理密钥可否事后回显,,data-model,【已决】只存裸 SHA-256（无盐、非慢哈希）不可回显；代价=忘了只能重新生成并重填所有客户端,enabled 位与 algo_version 列仍需存在,high,已决 2026-10-14
-UNKNOWN-06,CLOSED-D9+D10,鉴权失败是否做退避/锁定,,reliability,【已决】只做 FixedTimeEquals；地址写死 127.0.0.1 只有端口可改；不做计数/退避/锁定,ProxyKeyAuth 必须零可变状态（可用架构测试断言）,high,已决 2026-10-14
-RISK-02,LOW,AiGateway.Gateway.ProxyKeyAuthenticator,LAN interface,binding-scope,D9 已把 LAN 面关死，在线猜解面不存在；残余仅两点：401 错误体形状须按入站协议、以及将来若有人加 LAN 开关须重评,监听地址为代码常量 + 401 形状契约测试,low,已从 HIGH 降级（D9/D10）
-DECIDED-01,HIGH,AiGateway.Gateway.ProxyKeyAuthenticator,hash cache,correctness,吊销即刻生效完全依赖"每请求现查哈希、不加缓存"；加一层内存缓存会静默破坏该语义且不触发任何测试失败,集成测试：吊销后下一个请求必须 401,high,D7–D10 派生的新增强约束
+FORBIDDEN-03,MEDIUM,AiGateway.App（ViewModels）,AiGateway 与 AiGateway.Security 的内部类型,compile-time,UI 直接操作存储或保护器会绕开端口；明文 Key 一旦进 ViewModel 字段就难保不外泄,两个库默认 internal、各只公开一个注册方法 + 代码审查：ViewModel 不得持有 Key 字符串字段,high,2026-10-15 改写：原规则依赖 10 程序集的引用隔离；合并原 FORBIDDEN-03b 与 FORBIDDEN-08
+FORBIDDEN-04,MEDIUM,请求处理路径,AiGateway.App（UI）,runtime-call,请求线程回调 UI 会形成运行时环并可能与 Dispatcher 死锁,请求路径不得调用 Dispatcher.Invoke/InvokeAsync；UI 通知只走单向事件,medium,与 RISK-07 同源
+FORBIDDEN-05,MEDIUM,AiGateway（除配置存储外）,config.json,file-access,绕过配置存储直接读写文件会让加密字段与原子写出现两处真相,只有配置存储组件触碰该文件（代码审查）,medium,2026-10-15 改写：原为"绕过仓储直连 SQLite"
+FORBIDDEN-06,HIGH,AiGateway（运行日志）,AiGateway.Security,data-leak,日志侧一旦能拿到真实 Key，一行日志就成了外泄通道；日志只允许记代理密钥指纹,编译期：AiGateway 不引用 Security（护栏①）+ 日志写入器只接受 ProxyKeyFingerprint 类型,high,保留
+FORBIDDEN-07,HIGH,AiGateway（代理密钥验证器）,AiGateway.Security,privilege-creep,鉴权器若能解密，401 失败路径就站在明文 Key 的可达范围内,编译期：AiGateway 不引用 Security（护栏①）,high,保留
+FORBIDDEN-09,HIGH,AiGateway.Security（注入处理器）,上游 API,runtime-call,注入器自己发请求会让真实 Key 出现第二条外发路径；它只能改经过它的请求头,护栏③：Security 源码不出现 HttpClient / IHttpClientFactory / SocketsHttpHandler / HttpClientHandler / new HttpRequestMessage（base.SendAsync 除外）；Security 不引用上游客户端,high,2026-10-15 定稿 H：注入器是组合根挂进上游 HttpClient 管道的 DelegatingHandler
+FORBIDDEN-10,HIGH,任意代码,IRealKeyVault,data-leak,只写密钥库一旦能读，任何能拿到该接口的类都能经 DI 取得明文，而类型 / 引用 / 解密点计数三层防线全绿,护栏④：IRealKeyVault 所有成员只返回 void / bool / Task / Task<bool>,high,2026-10-15 review 新增
+DECRYPT-ONCE,HIGH,全工程,ProtectedData.Unprotect,invariant,解密点多于一处就说明有人开了第二条后门；这是代理密钥机制成立与否的判据,护栏②：src 下恰好 1 处且在注入处理器,high,原"解密调用点计数 == 1"独立成行
+RISK-01,HIGH,config.json,Windows DPAPI,data-protection,DPAPI 密文仅同机同用户可解；换机 / 换账户 / 重置密码后已存 Key 不可读,JSON 结构必须带 protector_id + key_version（计划 S2）,high,单向门：写第一条数据前定
+RISK-03,HIGH,AiGateway（翻译器）,OpenAI 上游 SSE,semantic-gap,OpenAI 流默认不返回 usage；不带 stream_options.include_usage 则 message_delta 的 usage 只能瞎猜,契约测试断言末 chunk 携带 usage,high,只影响 M2 翻译路径
+RISK-05,MEDIUM,AiGateway（翻译器）,每请求缓冲,lifetime,翻译器若用实例字段累积分片，并发会话会串流（Claude Code 常并行子代理）,无状态单例 + 每请求上下文对象；代码审查,medium,只影响 M2
+RISK-06,MEDIUM,AiGateway（直通与翻译）,上游请求,cancellation,客户端中止没传到上游会泄漏连接并让上游继续计费,集成测试：取消客户端请求后断言上游请求被取消,high,两条路径都要
+RISK-07,MEDIUM,AiGateway.App,WPF Dispatcher,threading,请求线程回调 Dispatcher 会与 Kestrel 死锁,请求路径不得调用 Dispatcher,medium,保留
+RISK-08,HIGH,本机不受信来源（浏览器网页 / DNS rebinding / 其他程序）,127.0.0.1 监听端口,network,写死回环挡不住本机浏览器里的网页；没有鉴权就能被网页借用上游额度,D6 代理密钥鉴权；测试：不带密钥的请求一律 401,medium,2026-10-15 更正旧版"回环无攻击面"的理由；替代旧 RISK-02（旧表里 RISK-02 出现了两行重复 ID）
+RISK-09,HIGH,AiGateway（直通转发器）,Anthropic 兼容上游,protocol-fidelity,官方网关协议要求转发 anthropic-version（去掉会坏）与 anthropic-beta（去掉可能 400）；Claude Code 请求带 ?beta=true,集成测试（桩上游）断言头与查询串原样到达 + M1 真客户端验收,high,来源 https://code.claude.com/docs/en/llm-gateway-protocol
+RISK-10,MEDIUM,用户关窗,Kestrel,availability,同进程（D3）下关掉主窗口即停代理，Claude Code 立刻报错,托盘常驻：关窗只隐藏，托盘菜单才退出（计划 S3）,high,review 补
+RISK-11,MEDIUM,IHttpClientFactory 自带日志处理器,鉴权头,data-leak,它排在注入处理器内侧（更靠近网络），可能记录写入后的鉴权头,计划 S5 实测；没打码就显式配置打码并加测试,low,默认行为未核实（OPEN-13）
+RISK-12,LOW,上游错误体,入站响应,data-leak,直通原样透传上游错误体；若上游回显完整 Key 就会泄到客户端,M1 验收实测（计划 S8）,low,主流上游只回显打码片段，未逐家核实（OPEN-12）
+DECIDED-01,HIGH,AiGateway（代理密钥验证器）,已启用哈希的内存快照,correctness,吊销要即刻生效；同进程下写配置的同时整体替换内存快照即可，不必每请求读盘,护栏⑤：吊销后下一个请求必须 401,high,2026-10-15 修订：原"每请求现查库、不加缓存"的前提（写入方在别处）在 D3 下不成立
+FORBIDDEN-01,RETIRED,Mapping.Anthropic,Mapping.OpenAI,compile-time,两个 codec 互引,—,—,D1 修订后只有一个翻译器，规则不再有对象
+FORBIDDEN-02,RETIRED,AiGateway.Core,其他程序集,compile-time,内核反向依赖,—,—,D11 后没有 Core 程序集
+RISK-04,CLOSED,Claude Code,/v1/messages/count_tokens,endpoint-coverage,旧版写"未实现会导致客户端直接报错"——错,—,high,官方文档：该端点可选，缺失时客户端按字符估算
+UNKNOWN-01,CLOSED,存储,Dapper vs EF Core,tech-choice,—,—,—,D2 修订为 JSON，无 ORM
+UNKNOWN-02,CLOSED,入站 OpenAI 协议客户端,,scope,—,—,—,D1 修订：不做
+UNKNOWN-03,CLOSED,thinking,,scope,—,—,—,直通原样携带；翻译路径丢弃（D4）
+UNKNOWN-04,CLOSED-D7,代理密钥与路由,,data-model,路由全部来自全局激活档；代价=多客户端不能同时用不同模型,—,high,2026-10-14
+UNKNOWN-05,CLOSED-D8,代理密钥回显,,data-model,只存裸 SHA-256 不可回显；代价=忘了只能重发,algo_version + enabled 字段仍需存在,high,2026-10-14
+UNKNOWN-06,CLOSED-D9+D10,鉴权失败防护与监听范围,,reliability,只做 FixedTimeEquals；地址写死 127.0.0.1,鉴权器零可变状态,high,2026-10-14

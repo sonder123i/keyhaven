@@ -1,166 +1,134 @@
-workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关 —— greenfield 目标架构（target-state）。工作区无代码，所有节点状态为 target，置信度见 ai-gateway.evidence.md。" {
+workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关 —— target-state（尚无业务代码）。2026-10-15 按 review 决策重写：只收 Anthropic 入站；出站分直通（Anthropic 兼容上游）与翻译（OpenAI，第二里程碑）；JSON 配置；3 个产品程序集 + 1 个测试项目。" {
 
     !identifiers hierarchical
 
     model {
-        operator = person "桌面操作者" "配置 Provider、录入/轮换 API Key、一键切换激活模型、查看请求足迹"
+        operator = person "桌面操作者" "录入上游 Key、生成 / 吊销代理密钥、一键切换当前模型、看运行日志。"
 
-        claudeCode = softwareSystem "Claude Code CLI" "只说 Anthropic 协议的入站客户端。配置 ANTHROPIC_BASE_URL=http://127.0.0.1:8000，API Key 字段填【代理密钥】。" {
+        claudeCode = softwareSystem "Claude Code CLI" "唯一入站客户端，只说 Anthropic Messages 协议。ANTHROPIC_BASE_URL=http://127.0.0.1:端口号，ANTHROPIC_AUTH_TOKEN=代理密钥。推理请求发往 /v1/messages?beta=true，带 anthropic-version / anthropic-beta 头；count_tokens 缺失时自行按字符估算。" {
             tags "External,InboundClient"
         }
-        openAiClient = softwareSystem "OpenAI 协议客户端" "Cursor / Codex / Cline / 自研脚本等，说 /v1/chat/completions，同样只持代理密钥。inferred：首期是否服务这类客户端尚未确认。" {
-            tags "External,InboundClient,LowConfidence"
+        localUntrusted = softwareSystem "本机不受信来源" "浏览器里的任意网页（含 DNS rebinding）与其他本机程序。监听写死 127.0.0.1 挡不住它们 —— 这正是代理密钥鉴权的防御职责（D6）。" {
+            tags "External,Threat"
         }
 
-        gateway = softwareSystem "AI 本地代理网关" "单机桌面应用：真实上游 API Key 用 DPAPI 加密存本地 SQLite；对外只发放可撤销的【代理密钥】。在本机 8000 端口暴露 Anthropic ⇄ OpenAI 双向协议转换代理，验过代理密钥后在内存中替换为真实 Key 再转发，支持 SSE 流式。" {
+        gateway = softwareSystem "AI 本地代理网关" "单机桌面应用：真实上游 Key 以 DPAPI 密文存在本机 JSON 配置里；对外只发可吊销的代理密钥。Anthropic 兼容上游走直通，OpenAI 上游走翻译。" {
 
-            appExe = container "AiGateway.App.exe" "唯一可部署单元：STA 线程跑 WPF UI，后台线程跑 Kestrel 网关，同进程共享内存态。" "C# / .NET 8 (net8.0-windows) + WPF + ASP.NET Core Minimal Hosting + Kestrel" {
-                tags "Deployable,SameProcess"
+            appExe = container "AiGateway.App.exe" "唯一可部署单元，UI 与 Kestrel 同进程（D3）。由 3 个程序集组成：AiGateway.App（WPF + 组合根 + 托盘）、AiGateway（网关、路由、直通、翻译、配置、日志；不引用 Security）、AiGateway.Security（DPAPI 与注入处理器；全工程唯一能解密）。各库默认 internal，只公开一个注册方法。" "C# / .NET 8 + WPF + ASP.NET Core Kestrel" {
+                tags "Deployable"
 
-                compositionRoot = component "Composition Root / 宿主生命周期" "注册 DI；启动/停止 Kestrel；持有单实例 Mutex；退出时优雅关闭在途流。" ".NET Generic Host + Microsoft.Extensions.DependencyInjection" {
-                    tags "Hosting"
+                compositionRoot = component "组合根与宿主" "[AiGateway.App] 调 AddAiGateway() 与 AddAiGatewaySecurity() 完成装配；后台线程启停 Kestrel；单实例 Mutex；托盘常驻：关窗只隐藏，托盘菜单才退出（D3 的必然要求，否则关窗即断 Claude Code）。" ".NET Generic Host + DI" {
+                    tags "App"
+                }
+                wpfViews = component "WPF 界面" "[AiGateway.App] 四类页面（D5）：Provider/模型管理、代理密钥管理、一键切换、运行日志。代理密钥明文只在生成时显示一次，旁边给出可复制的 Claude Code 配置片段；不改写用户的 settings.json。" "XAML" {
+                    tags "App"
+                }
+                viewModels = component "ViewModels" "[AiGateway.App] 只经端口操作：配置存储、只写密钥库、激活快照、日志读取。" "CommunityToolkit.Mvvm（待定）" {
+                    tags "App"
                 }
 
-                wpfViews = component "WPF Views (XAML)" "四个核心页面：模型/Provider 管理、代理密钥管理、激活档一键切换、基础运行日志列表。代理密钥明文只在生成的那一刻出现一次并靠复制带走，之后列表只显示指纹。" "XAML + .NET 8 WPF" {
-                    tags "UI"
+                httpEndpoints = component "本地 HTTP 入口" "[AiGateway] POST /v1/messages（含 ?beta=true 查询串）、POST /v1/messages/count_tokens、GET /health。地址写死 127.0.0.1，只有端口可改（D9）。" "ASP.NET Core Minimal API" {
+                    tags "Lib"
                 }
-                viewModels = component "ViewModels (MVVM)" "界面只保留四类核心动作：模型管理、代理密钥管理（生成/吊销/复制一次明文）、一键切换激活模型、查看基础运行日志。**刻意不做**统计图表、多用户、云端同步。" "CommunityToolkit.Mvvm（选型待确认）" {
-                    tags "UI,LowConfidence"
+                proxyKeyAuthenticator = component "代理密钥验证器" "[AiGateway] 从 x-api-key 或 Authorization: Bearer 取代理密钥，SHA-256 后与已启用哈希的内存快照做 FixedTimeEquals（D8/D10）。快照随配置写入整体替换，吊销即刻生效，不每请求读盘。失败回 Anthropic 形状 401。" "SHA-256 + FixedTimeEquals" {
+                    tags "Lib"
+                }
+                activationState = component "激活快照" "[AiGateway] 当前激活的 (Provider, 上游类型, BaseUrl, 真实模型名)。不可变快照，切换时整体替换（D7：路由唯一来源）。" "Volatile 引用 + 不可变 record" {
+                    tags "Lib"
+                }
+                routeResolver = component "路由解析" "[AiGateway] 读激活快照，决定走直通还是翻译、真实模型名是什么。不读代理密钥的任何属性。" "C#" {
+                    tags "Lib"
+                }
+                passthroughForwarder = component "直通转发器" "[AiGateway] 上游原生说 Anthropic 协议时使用（Anthropic、DeepSeek /anthropic）。请求体只改顶层 model 字段，其余原样；转发 anthropic-version / anthropic-beta 与原查询串；响应状态码与 SSE 字节原样逐块回流并 flush；客户端中止即取消上游。thinking、cache_control 等一律原样携带。" "JsonNode 单字段改写 + 流式复制" {
+                    tags "Lib"
+                }
+                translator = component "Anthropic → OpenAI 翻译器" "[AiGateway] 上游只说 chat/completions 时使用（第二里程碑）。请求翻译（带 stream_options.include_usage）；流式把 OpenAI chunk 重编码为 Anthropic 事件序列并合成 usage；按 D4 只保证 tool_use，thinking 在这条路上丢弃。无状态单例，每请求状态放在上下文对象里。" "System.Text.Json" {
+                    tags "Lib,Milestone2"
+                }
+                toolCallSession = component "工具调用增量重编码" "[AiGateway] OpenAI tool_calls 扁平分片（index / 首片 id+name / 后续 arguments、无结束标记）→ Anthropic content_block_start / input_json_delta / content_block_stop，块索引严格配对。全设计唯一的协议难点。" "C#" {
+                    tags "Lib,Milestone2,HighRisk"
+                }
+                upstreamClients = component "上游 HTTP 客户端" "[AiGateway] IHttpClientFactory 命名客户端；只在请求选项里设 provider id，代码不经手真实 Key，也不知道注入器存在。" "IHttpClientFactory" {
+                    tags "Lib"
+                }
+                configStore = component "配置存储" "[AiGateway] 读写 config.json：Provider 元数据、Key 密文（含 protector_id / key_version）、代理密钥哈希（含 algo_version / enabled）、激活档、端口。原子写；启动时读一次，之后以内存快照为准。" "System.Text.Json" {
+                    tags "Lib"
+                }
+                runLog = component "运行日志" "[AiGateway] 内存环形缓冲，一行一请求：时间、代理密钥指纹、上游、模型、状态、首字节耗时、中止原因。重启清空。不含请求体、响应内容、任何密钥明文。" "内存环形缓冲" {
+                    tags "Lib"
                 }
 
-                httpEndpoints = component "本地 HTTP 入口" "POST /v1/messages、POST /v1/chat/completions、POST /v1/messages/count_tokens、GET /health。只做协议派发与响应写出，不含业务。" "ASP.NET Core Minimal API" {
-                    tags "Gateway,Mvp"
+                credentialInjector = component "真实密钥注入处理器" "[AiGateway.Security] HttpClient 管道里的 DelegatingHandler，由组合根经 Security 唯一的公开注册方法挂进上游客户端；没有任何组件能调用它。按请求选项里的 provider id 取密文 → 解密 → 只写经过它的这次请求的鉴权头。不构造、不发起请求。" "DelegatingHandler" {
+                    tags "Security,HighRisk"
                 }
-                proxyKeyAuthenticator = component "代理密钥验证器" "入站鉴权中间件：从 Authorization / x-api-key 取代理密钥，与库中 SHA-256 哈希做 CryptographicOperations.FixedTimeEquals 比对，检查 enabled 位。产出【只含身份与指纹】的已认证 RequestContext —— 按 D7 不携带任何路由信息。失败按入站协议错误体形状回 401。按 D10：无缓存、无失败计数、无退避，因此本组件完全无状态、注册为 Singleton；每请求现查哈希正是为了让吊销即刻生效。" "ASP.NET Core middleware + SHA-256 + FixedTimeEquals" {
-                    tags "Security,Mvp"
-                }
-                httpListenerPolicy = component "监听与端口策略" "按 D9：绑定地址在代码里写死 127.0.0.1，UI 不提供局域网开关，只暴露端口改（默认 8000）。端口冲突要能在 UI 上看到并当场改，/health 免鉴权用于自检端口活着。" "Kestrel Listen(Loopback, port)" {
-                    tags "Hosting,Mvp,Stripped"
-                }
-                credentialInjector = component "真实密钥注入器" "真实 API Key 明文在进程内的唯一现身点。形态是 HttpClient 管道里的一个 DelegatingHandler，由 compositionRoot 装配进 upstreamClients 的 HttpClient，不被任何组件调用（2026-10-15 定稿 H）：按请求选项里的 provider id 取 DPAPI 密文 → 解密 → 仅写入经过它的这次出站请求的鉴权头。不构造、不发起任何请求；不落日志、不进异常消息、不回给客户端。" "DelegatingHandler + DPAPI" {
-                    tags "Security,Mvp,HighRisk"
-                }
-                routeResolver = component "路由与激活模型解析器" "按 D7：路由的【唯一来源】是 ActivationState 的全局快照，本组件不读代理密钥的任何属性、也不查库。输入 (入站协议, 请求体 model 字段) → 输出 (Provider, 真实 model, BaseUrl)。" "C#" {
-                    tags "Gateway,Mvp"
-                }
-                anthropicCodec = component "Anthropic 编解码器" "解析 /v1/messages 请求与生成 messages SSE 事件序列（message_start / content_block_start / content_block_delta / content_block_stop / message_delta / message_stop）。thinking 按 D4 出局：入站 thinking 配置必须被识别并显式降级，不得无声流入规范模型。" "System.Text.Json" {
-                    tags "Mapping,Mvp"
-                }
-                openAiCodec = component "OpenAI 编解码器" "解析 /v1/chat/completions 请求与生成 chat.completion.chunk 序列。" "System.Text.Json" {
-                    tags "Mapping,Mvp"
-                }
-                canonicalModel = component "内部规范消息模型" "Provider 无关的 Message / ContentBlock / ToolSpec / Delta / Usage / StopReason 抽象。双向矩阵的唯一汇合点。" "C# records, 无外部依赖" {
-                    tags "Core,Mvp,NoIo"
-                }
-                toolCallBridge = component "工具调用桥接器" "tool_use ⇄ tool_calls 的语义与分片对齐：把 OpenAI 的 index+id+function.name+arguments 增量拼成 Anthropic 的 input_json_delta。" "C#" {
-                    tags "Mapping,Mvp,HighRisk"
-                }
-                streamRelay = component "流式转发管线" "逐事件读上游 SSE → 解码为规范增量 → 重编码为入站协议事件 → 立即 flush；处理心跳、上游提前断开、客户端中止。" "IStreamDecoder/Encoder pipeline" {
-                    tags "Gateway,Mvp,HighRisk"
-                }
-                upstreamClients = component "上游 Provider 客户端" "按 Provider 构造 HttpClient：BaseUrl、鉴权头形态（Authorization Bearer vs x-api-key）、超时与非流式/流式调用。" "HttpClient + SocketsHttpHandler" {
-                    tags "Provider,Mvp"
-                }
-                activationState = component "激活态共享内存" "「当前激活模型」的进程内单一事实源；UI 切换后网关下一个请求即生效，无需 IPC。按 D7 它是路由的【唯一来源】，因此快照必须自带 Provider、真实模型名、BaseUrl 与密钥句柄（是引用不是明文）。" "ConcurrentDictionary + 不可变快照 + 变更事件" {
-                    tags "Core,Mvp,SameProcess"
-                }
-                secretProtector = component "密钥保护服务" "DPAPI CryptProtectData/CryptUnprotectData，CurrentUser 作用域 + 每 Provider 独立 entropy 做域分离。" "System.Security.Cryptography.ProtectedData" {
-                    tags "Security,Mvp"
-                }
-                repositories = component "数据访问仓储" "Provider / Model / 真实 Key 密文 / ProxyKey(哈希+启用位) / 全局激活档（D7：只有一份）/ 运行日志行的 SQLite 读写与建库迁移。" "SQLite + Dapper 或 EF Core（选型待定）" {
-                    tags "Storage,Mvp,LowConfidence"
-                }
-                runLog = component "基础运行日志" "一行一请求：时间 / 代理密钥前缀指纹 / 入站协议 / 目标 Provider+model / 状态 / 首字节耗时 / 中止原因。环形缓冲有上限。**刻意不含**统计图表、成本核算、请求体、响应内容、任何密钥明文。" "SQLite 环形表 + 只读列表 UI" {
-                    tags "Observability,Mvp,Stripped"
-                }
-                failoverPolicy = component "故障转移与重试" "多 Key 轮转、429/5xx 退避重试、备用模型降级。" "Polly（选型待定）" {
-                    tags "Reliability,Phase2,LowConfidence"
+                secretProtector = component "DPAPI 保护器与只写密钥库" "[AiGateway.Security] DPAPI CurrentUser + 每 Provider 独立 entropy。对外只实现只写端口 IRealKeyVault（Save / Delete / Exists），签名上拿不到明文；解密只供注入处理器在程序集内部使用。" "System.Security.Cryptography.ProtectedData" {
+                    tags "Security"
                 }
             }
 
-            configDb = container "gateway.db" "本机 SQLite 单文件，绝不明文落盘。两种密钥存储形态不同：真实上游 API Key = DPAPI 可逆密文（能还原）；代理密钥 = 不可逆 SHA-256，按 D8【生成后不可回显】。无盐且不用慢哈希在此是正当的，因为代理密钥由程序生成、是高熵随机值而非人写口令，不存在离线猜解面。代理密钥表带 algo_version + enabled 位以备平滑换算法。" "SQLite 文件 + DPAPI 加密列 + SHA-256 哈希列" {
-                tags "Database"
+            configFile = container "config.json" "%LOCALAPPDATA% 下的单个 JSON 文件。真实 Key 只以 DPAPI 密文出现；代理密钥只以 SHA-256 出现（D8，不可回显）。" "JSON 文件 + DPAPI 加密字段" {
+                tags "File"
             }
         }
 
-        dpapi = softwareSystem "Windows DPAPI" "OS 级用户主密钥体系。密文只能被同机同用户解密：换机、换 Windows 账户、重置密码后可能不可读。" {
+        dpapi = softwareSystem "Windows DPAPI" "OS 用户主密钥体系。防其他 Windows 用户与离线拿走硬盘；防不住以本人身份运行的恶意程序（它能直接调解密）。换机、换账户、重置密码后密文可能不可读。" {
             tags "External,OsCapability"
         }
-
-        openAiApi = softwareSystem "OpenAI 兼容远端 API" "api.openai.com / api.deepseek.com 等，暴露 /v1/chat/completions。" {
+        anthropicApi = softwareSystem "Anthropic 兼容上游" "原生说 Messages 协议的上游：api.anthropic.com、https://api.deepseek.com/anthropic 等。DeepSeek 支持 thinking / tools / 图片，忽略 anthropic-beta 与 cache_control，未知模型名映射到默认模型。" {
             tags "External,Upstream"
         }
-        anthropicApi = softwareSystem "Anthropic API" "api.anthropic.com，暴露 /v1/messages。" {
-            tags "External,Upstream"
+        openAiApi = softwareSystem "OpenAI Chat 上游" "只说 /v1/chat/completions 的上游（api.openai.com 等），需要翻译。第二里程碑。" {
+            tags "External,Upstream,Milestone2"
         }
 
-        operator -> gateway "通过界面管理密钥、发放/吊销代理密钥、一键切换当前模型" "Keyboard/Mouse"
-        gateway -> dpapi "加解密 API Key（CurrentUser 作用域）" "CryptProtectData"
+        operator -> gateway "管理 Key 与代理密钥、一键切换、看日志" "Keyboard/Mouse"
+        claudeCode -> gateway.appExe.httpEndpoints "POST /v1/messages?beta=true（SSE）与 /v1/messages/count_tokens；头带代理密钥" "HTTP/1.1 + SSE，127.0.0.1"
+        localUntrusted -> gateway.appExe.httpEndpoints "可以向回环端口发请求；拿不到代理密钥 → 401" "HTTP"
 
-        claudeCode -> gateway "POST /v1/messages（含流式）、/v1/messages/count_tokens；头带代理密钥" "HTTP/1.1 + SSE over localhost:8000"
-        openAiClient -> gateway "POST /v1/chat/completions；头带代理密钥" "HTTP/1.1 over localhost:8000"
-
-        gateway -> openAiApi "转发规范化后的 chat/completions 请求" "HTTPS + SSE"
-        gateway -> anthropicApi "转发规范化后的 messages 请求（Provider 原生即 Anthropic 时近乎直传）" "HTTPS + SSE"
-
-        gateway.appExe -> gateway.configDb "读写 Provider/Model/真实Key密文/代理密钥哈希/路由档/日志行" "Microsoft.Data.Sqlite"
-
+        gateway.appExe.compositionRoot -> gateway.appExe.wpfViews "启动主窗口与托盘图标" "in-process"
+        gateway.appExe.compositionRoot -> gateway.appExe.httpEndpoints "后台线程启动 Kestrel：地址写死 127.0.0.1，端口取自配置" "in-process"
+        gateway.appExe.compositionRoot -> gateway.appExe.credentialInjector "经 Security 唯一的公开注册方法，把注入处理器挂进上游 HttpClient 管道" "in-process"
         gateway.appExe.wpfViews -> gateway.appExe.viewModels "数据绑定 / 命令" "XAML Binding"
-        gateway.appExe.viewModels -> gateway.appExe.activationState "读当前激活档、写入切换" "in-process"
-        gateway.appExe.viewModels -> gateway.appExe.repositories "增删改 Provider 元数据（经 Core 仓储端口；不含 Key）" "in-process"
-        gateway.appExe.viewModels -> gateway.appExe.secretProtector "保存 / 删除真实 Key：经 Core 只写端口 IRealKeyVault，签名上不可读回（S1 review）" "in-process"
-        gateway.appExe.viewModels -> gateway.appExe.upstreamClients "点击「测试连通性」" "in-process"
-        gateway.appExe.wpfViews -> gateway.appExe.compositionRoot "App 入口在 UI 线程上调 AddAiGateway()：装配非 UI 实现并启动 Kestrel（C2 修正：组合根不引用 UI，VM 由 App 自己注册）" "in-process"
-        gateway.appExe.compositionRoot -> gateway.appExe.httpEndpoints "在同进程后台线程启动 Kestrel" "in-process"
-        gateway.appExe.compositionRoot -> gateway.appExe.activationState "装载初始路由快照" "in-process"
+        gateway.appExe.viewModels -> gateway.appExe.configStore "增删改 Provider 与端口；生成代理密钥时只写入其 SHA-256" "in-process"
+        gateway.appExe.viewModels -> gateway.appExe.secretProtector "保存 / 删除真实 Key：只写端口 IRealKeyVault，签名上不可读回" "in-process"
+        gateway.appExe.viewModels -> gateway.appExe.activationState "一键切换：整体替换不可变快照" "in-process"
+        gateway.appExe.viewModels -> gateway.appExe.runLog "只读最近若干行" "in-process"
 
-        gateway.appExe.httpEndpoints -> gateway.appExe.proxyKeyAuthenticator "每个 /v1 请求先过鉴权（/health 除外）" "in-process"
-        gateway.appExe.proxyKeyAuthenticator -> gateway.appExe.repositories "每请求现查：只取哈希与 enabled 位（无缓存，D10）" "in-process"
-        gateway.appExe.proxyKeyAuthenticator -> gateway.appExe.runLog "401 也留痕，只记指纹" "in-process"
-        gateway.appExe.httpEndpoints -> gateway.appExe.routeResolver "携已认证 RequestContext 解析目标 Provider 与真实 model" "in-process"
-        gateway.appExe.httpEndpoints -> gateway.appExe.anthropicCodec "入站 Anthropic：请求解码 / 出站事件编码" "in-process"
-        gateway.appExe.httpEndpoints -> gateway.appExe.openAiCodec "入站 OpenAI：请求解码 / 出站 chunk 编码" "in-process"
-        gateway.appExe.routeResolver -> gateway.appExe.activationState "读不可变激活快照（D7：路由唯一来源）" "in-process"
-        gateway.appExe.compositionRoot -> gateway.appExe.httpListenerPolicy "按存好的端口启动监听；地址写死回环" "in-process"
+        gateway.appExe.httpEndpoints -> gateway.appExe.proxyKeyAuthenticator "/v1/* 先鉴权（/health 除外）" "in-process"
+        gateway.appExe.proxyKeyAuthenticator -> gateway.appExe.configStore "读已启用代理密钥哈希的内存快照（写入即替换）" "in-process"
+        gateway.appExe.httpEndpoints -> gateway.appExe.routeResolver "解析目标上游与真实模型" "in-process"
+        gateway.appExe.routeResolver -> gateway.appExe.activationState "读不可变快照（D7）" "in-process"
+        gateway.appExe.httpEndpoints -> gateway.appExe.passthroughForwarder "上游是 Anthropic 兼容：直通" "in-process"
+        gateway.appExe.httpEndpoints -> gateway.appExe.translator "上游是 OpenAI：翻译（第二里程碑）" "in-process"
+        gateway.appExe.httpEndpoints -> gateway.appExe.runLog "每请求收尾写一行，只记代理密钥指纹" "in-process"
 
-        gateway.appExe.anthropicCodec -> gateway.appExe.canonicalModel "入站协议 → 规范请求" "in-process"
-        gateway.appExe.openAiCodec -> gateway.appExe.canonicalModel "入站协议 → 规范请求" "in-process"
-        gateway.appExe.anthropicCodec -> gateway.appExe.toolCallBridge "tool_use 块增量编码" "in-process"
-        gateway.appExe.openAiCodec -> gateway.appExe.toolCallBridge "tool_calls 分片解码" "in-process"
-        gateway.appExe.canonicalModel -> gateway.appExe.upstreamClients "规范请求交给出站客户端" "in-process"
+        gateway.appExe.passthroughForwarder -> gateway.appExe.upstreamClients "原样请求体（只改 model）+ anthropic-version / anthropic-beta + 原查询串" "in-process"
+        gateway.appExe.translator -> gateway.appExe.toolCallSession "tool_calls 分片 → content_block 生命周期" "in-process"
+        gateway.appExe.translator -> gateway.appExe.upstreamClients "chat/completions 请求（stream_options.include_usage）" "in-process"
 
-        gateway.appExe.streamRelay -> gateway.appExe.anthropicCodec "重编码为 messages SSE 事件" "in-process"
-        gateway.appExe.streamRelay -> gateway.appExe.openAiCodec "重编码为 completion chunk" "in-process"
-        gateway.appExe.streamRelay -> gateway.appExe.toolCallBridge "累积 arguments 分片为 partial_json" "in-process"
-        gateway.appExe.upstreamClients -> gateway.appExe.streamRelay "上游 SSE 原始帧" "in-process"
-        gateway.appExe.streamRelay -> gateway.appExe.httpEndpoints "逐事件回写并 flush 到入站连接" "in-process"
-
+        gateway.appExe.credentialInjector -> gateway.appExe.upstreamClients "作为其管道处理器，在出站请求经过时写真实 Key 鉴权头（运行时装配，两程序集互不引用）" "in-process"
         gateway.appExe.credentialInjector -> gateway.appExe.secretProtector "现场解密（全工程唯一解密调用点）" "in-process"
-        gateway.appExe.secretProtector -> gateway.appExe.repositories "IRealKeyVault 实现：加密后只存密文字节（C1 修正：Storage 不再反向依赖 Security）" "in-process"
-        gateway.appExe.credentialInjector -> gateway.appExe.repositories "按【全局激活档】指向的 Provider 取 DPAPI 密文（D7）" "in-process"
-        gateway.appExe.credentialInjector -> gateway.appExe.upstreamClients "作为其 HttpClient 管道处理器，在出站请求经过时写入真实 Key 鉴权头（唯一跨界赋值点；运行时装配，非编译期依赖）" "in-process"
+        gateway.appExe.credentialInjector -> gateway.appExe.configStore "按 provider id 取密文" "in-process"
+        gateway.appExe.secretProtector -> gateway.appExe.configStore "加密后只写密文" "in-process"
+        gateway.appExe.secretProtector -> dpapi "CryptProtectData / CryptUnprotectData（CurrentUser + 每 Provider entropy）" "P/Invoke"
+        gateway.appExe.configStore -> gateway.configFile "启动读一次；写入用临时文件 + 替换" "System.Text.Json"
 
-        gateway.appExe.httpEndpoints -> gateway.appExe.runLog "每请求收尾写一行" "in-process"
-        gateway.appExe.upstreamClients -> gateway.appExe.failoverPolicy "429/5xx 交由重试与轮转（Phase 2）" "in-process"
-        gateway.appExe.secretProtector -> dpapi "调用 OS 主密钥" "P/Invoke"
-        gateway.appExe.compositionRoot -> gateway.appExe.proxyKeyAuthenticator "装载鉴权中间件到管道" "in-process"
-
-        gateway.appExe.upstreamClients -> openAiApi "HTTPS 出站调用" "HTTPS + SSE"
-        gateway.appExe.upstreamClients -> anthropicApi "HTTPS 出站调用" "HTTPS + SSE"
+        gateway.appExe.upstreamClients -> anthropicApi "HTTPS；真实 Key 只在这条边上离开进程" "HTTPS + SSE"
+        gateway.appExe.upstreamClients -> openAiApi "HTTPS（第二里程碑）" "HTTPS + SSE"
     }
 
     views {
-        systemContext gateway "SystemContext" "L1 —— 谁用这个网关，它直连哪些外部系统。全部为 target 状态（尚无代码）。" {
+        systemContext gateway "SystemContext" "L1 —— 谁用这个网关、它连哪些外部系统、威胁来自哪里。" {
             include *
             autoLayout lr
         }
 
-        container gateway "Containers" "L2 —— 唯一可部署单元 AiGateway.App.exe（WPF UI 与 Kestrel 同进程）+ 本机 SQLite 数据仓。对外只发可撤销的代理密钥，真实 Key 明文永不离开进程。" {
+        container gateway "Containers" "L2 —— 唯一可部署单元 AiGateway.App.exe + 本机 config.json。" {
             include *
             autoLayout lr
         }
 
-        component gateway.appExe "Components" "L3 —— appExe 内 19 个组件（18 MVP + 1 Phase 2）。两条不许打折的脊柱：① 入站协议 → 规范模型 → 出站协议，两个 codec 永不可互引；② 代理密钥只决定「能不能进」(D7)，路由只来自全局激活快照，真实 Key 只在 credentialInjector 一处现身。" {
+        component gateway.appExe "Components" "L3 —— 15 个组件，按程序集着色。两条脊柱：① 入站只有 Anthropic，出站分直通与翻译；② 代理密钥只决定能不能进，真实 Key 只在注入处理器一处解密、只沿上游客户端这一条边离开进程。" {
             include *
             autoLayout tb
         }
@@ -178,65 +146,43 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关 —— 
             element "InboundClient" {
                 shape hexagon
             }
+            element "Threat" {
+                background #b91c1c
+                color #ffffff
+                border dashed
+            }
             element "Upstream" {
                 shape pipe
             }
-            element "Database" {
-                shape cylinder
+            element "File" {
+                shape folder
                 background #4d6fa8
                 color #ffffff
             }
             element "Deployable" {
                 background #2e5f8a
+                color #ffffff
             }
             element "OsCapability" {
                 shape circle
                 background #b8860b
                 color #ffffff
             }
-            element "UI" {
+            element "App" {
                 background #6b8cba
-            }
-            element "Core" {
-                background #1f6f5c
                 color #ffffff
             }
-            element "Mapping" {
-                background #7b5ea7
-                color #ffffff
-            }
-            element "Gateway" {
+            element "Lib" {
                 background #3a6ea5
-                color #ffffff
-            }
-            element "Provider" {
-                background #2f7d6b
                 color #ffffff
             }
             element "Security" {
                 background #a33b3b
                 color #ffffff
             }
-            element "Storage" {
-                background #5c5c5c
-                color #ffffff
-            }
-            element "Hosting" {
-                background #556b7b
-                color #ffffff
-            }
-            element "Phase2" {
-                dashed true
+            element "Milestone2" {
+                border dashed
                 opacity 70
-            }
-            element "LowConfidence" {
-                dashed true
-            }
-            edge "in-process" {
-                dashed true
-            }
-            edge "SSE" {
-                color #c0392b
             }
         }
     }

@@ -1,55 +1,70 @@
 # AI 本地代理网关（Windows WPF）
 
-> 本文件是新会话的入口。架构细节**不在这里**，在 `docs/architecture/`，此处只交代到哪、读到哪一步、以及为什么。
+> 新会话的入口。只交代**到哪了、先读什么、为什么**；架构细节在 `docs/architecture/`。
 
 ## 这是什么
 
-C#/.NET 8 WPF 桌面应用。本机 `127.0.0.1:<port>` 起一个 Kestrel 代理，把 Anthropic `/v1/messages` ⇄ OpenAI `/v1/chat/completions` 双向互转（含 SSE 流式），供 Claude Code 等客户端使用。真实上游 API Key 用 **Windows DPAPI + SQLite** 加密存本地；对外只发放可撤销的**代理密钥**，验过后在内存里替换成真实 Key 再转发。
+C# / .NET 8 WPF 桌面应用。Claude Code 把 `ANTHROPIC_BASE_URL` 指向本机 `127.0.0.1:端口`，网关验过**代理密钥**后转给当前激活的上游：
+- 上游原生说 Anthropic 协议（Anthropic、DeepSeek `/anthropic`）→ **直通**，只改 `model` 字段；
+- 上游只说 OpenAI 协议 → **翻译**（第二里程碑）。
 
-**产品定位：轻量、极简、纯本地。** 这条是硬约束，不是我加的。
+真实上游 Key 以 **DPAPI 密文**存在本机 `config.json` 里，只在一处解密，只沿一条边离开进程。
+
+**产品定位：轻量、极简、纯本地。** 这是你定的硬约束。
 
 ## 现在在哪一步
 
-阶段 1–4 已完成。**阶段 5 只落了 S1 = 解决方案骨架，没有任何业务代码**（10 个 csproj 全是空壳，Core 里连一个类型都还没有）。
-
 | 阶段 | 状态 |
 | --- | --- |
-| 1 探索 / 2 澄清 / 3 架构 | ✅ 完成，见下 |
-| 4 实现计划（拆成带依赖顺序的故事） | ✅ 完成 —— **18 个故事在 `docs/plan/ai-gateway.implementation-plan.json`**（JSON 已校验：无悬空 `blockedBy`、无依赖环、每故事 ≤7 任务且都标 `fits-one-run`） |
-| 5 编码 | 🟡 **S1 完成（经 review 返修）**：骨架 + `.gitattributes` + `global.json` + 10 项目。**首版声称的"0 警告 0 错误"只在本机成立**——`.gitignore` 的 `*.app` 吞掉了整个 App 项目，推上去的仓库构建失败；行尾验收也没过。返修后以 **fresh clone 构建 + 测试** 验收。S1 撞出的两处程序集环与 review 更正见 `findings §3.1`。**注入器接法已定稿为 H**（Security 里的 `DelegatingHandler`，由 Hosting 挂进 Providers 的 HttpClient 管道，无人可调用；决策表见 `findings §3.1`）。**下一步 = S2**（架构测试脚手架） |
+| 1–3 探索 / 澄清 / 架构 | ✅ **2026-10-15 review 后重写**（第一版出自上一个模型；为什么改见下文与 `evidence.md` §2） |
+| 4 实现计划 | ✅ **13 个故事**：`docs/plan/ai-gateway.implementation-plan.json`。M1 = S1–S8（DeepSeek 直通可用），M2 = S11–S12（OpenAI 翻译） |
+| 5 编码 | ⚠️ **仓库里现有的 10 项目骨架是旧架构，与文档不符**。下一步 = 新 S1：重做成 3 + 1 个项目 |
 
-## 读这些文件（按顺序）
+## 先读这些（按顺序）
 
-1. `docs/architecture/ai-gateway.architecture-understanding.md` —— 先读这份。需求基线 D1–D10、**不做清单**、两条架构脊柱、端口与安全梯子的定稿理由。
-2. `docs/architecture/ai-gateway.structurizr.dsl` —— 真相源。L1 Context / L2 Container / L3 Component（19 组件）。用 Structurizr DSL viewer 打开可看图。
-3. `docs/architecture/ai-gateway.dependency-impact-findings.md` —— 程序集依赖、耦合度、影响半径、三条会自然长出来的后门边。
-4. `docs/architecture/ai-gateway.request-flow.dot` —— 一次请求的生命周期，代理密钥在哪一步被换成真实 Key。
-5. `docs/architecture/ai-gateway.dependencies.dot` —— 依赖图，含 9 条 `FORBIDDEN-*` 红色禁止边（禁令，不是现状）。
-6. `docs/architecture/ai-gateway.evidence.md` —— 每个节点凭什么存在；**哪些是用户明示、哪些是我的推断**（这点很重要，别把我的判断当他的决定）。
-7. `docs/architecture/ai-gateway.violations.csv` —— 机器可读的禁令与未闭环项。
+1. `docs/architecture/ai-gateway.architecture-understanding.md` —— 决策 D1–D14、不做清单、外部事实（带网址）、两条脊柱、安全梯子。
+2. `docs/architecture/ai-gateway.structurizr.dsl` —— 真相源，L1/L2/L3 三视图，15 个组件。**已用 Structurizr CLI 解析通过**。
+3. `docs/architecture/ai-gateway.dependency-impact-findings.md` —— 为什么是 3 + 1 个项目、五条护栏、S1 实测教训、两扇后门、变更影响。
+4. `docs/architecture/ai-gateway.request-flow.dot` —— 一次请求：鉴权 → 路由 → 直通 / 翻译 → 注入 → 上游。
+5. `docs/architecture/ai-gateway.dependencies.dot` —— 程序集引用、运行时装配、禁止边。
+6. `docs/architecture/ai-gateway.evidence.md` —— 每条决策出自谁、哪一轮；外部证据出处。**别把我的推断当成你的决定。**
+7. `docs/architecture/ai-gateway.violations.csv` —— 规则、风险、开放项（含已退役 / 已关闭的，留作来历）。
 
-## 十条已定决策（不要再讨论，要改先说代价）
+## 已定决策（要改先说代价）
 
-D1 双向矩阵 Anthropic+OpenAI（2+2 个 codec，不是 N×M）· D2 DPAPI+SQLite 单库 · D3 同进程内嵌 Kestrel（唯一可部署单元）· D4 MVP 只含 tool_use 双向 · D5 轻量纯本地，UI 只有模型管理/代理密钥管理/一键切换/基础运行日志 · D6 代理密钥验证后内存替换真实 Key · D7 **路由只来自全局激活档，密钥不含路由**（代价：多客户端不能同时用不同模型）· D8 **代理密钥只存不可逆 SHA-256，不可回显** · D9 **监听地址写死 `127.0.0.1`，只有端口可改** · D10 **鉴权失败只做 `FixedTimeEquals`，无计数/退避/锁定**
+| # | 决策 |
+| --- | --- |
+| D1 | 只收 Anthropic 入站；出站：Anthropic 兼容上游直通，OpenAI 上游翻译 *(10-15 修订)* |
+| D2 | JSON 配置 + DPAPI 加密字段；运行日志只在内存 *(10-15 修订)* |
+| D3 | UI 与 Kestrel 同进程，唯一可部署单元；托盘常驻 |
+| D4 | 翻译路径只保证 tool_use；直通原样携带一切 |
+| D5 | 轻量极简纯本地；UI 只有 Provider/模型、代理密钥、一键切换、运行日志 |
+| D6 | 客户端只持可吊销代理密钥，网关在内存里换成真实 Key（挡的是本机网页与其他程序） |
+| D7 | 路由只来自全局激活档（多客户端不能同时用不同模型） |
+| D8 | 代理密钥只存 SHA-256，不可回显 |
+| D9 | 监听写死 127.0.0.1，只有端口可改 |
+| D10 | 鉴权失败只做 FixedTimeEquals，无计数 / 退避 / 锁定 |
+| D11 | 3 个产品程序集 + 1 个测试项目；库默认 internal *(10-15)* |
+| D12 | 注入器是 DelegatingHandler，组合根挂进上游 HttpClient 管道，无人可调用 *(10-15)* |
+| D13 | `IRealKeyVault` 只写 *(10-15)* |
+| D14 | M1 = DeepSeek 直通，零协议翻译 *(10-15)* |
 
-## 开工前置：已清（2026-10-14 逐条实测，不是"应该没问题"）
+## 2026-10-15 review 改了什么（一段话）
 
-| 原阻塞 | 现状 | 实测证据 |
-| --- | --- | --- |
-| ⛔ 没有 .NET SDK | ✅ 已装 `8.0.426`（`winget install Microsoft.DotNet.SDK.8`，机器级，进 `C:\Program Files\dotnet\sdk`） | 不止看 `--list-sdks`：临时建 `dotnet new wpf` 并 `dotnet build` → `net8.0-windows\Probe.dll`，**0 警告 0 错误**，跑完即删。WPF 要的 WindowsDesktop targeting pack 随 SDK 一起到位。 |
-| ⛔ `E:\key` 不是 git 仓库 | ✅ `git init -b main` 已执行，`.gitignore` 由 `dotnet new gitignore` 生成（8433 字节） | 仓库内 `user.email` 覆盖为 `276609447+sonder123i@users.noreply.github.com`（`gh api user` 当场核实的 login+id），**全局微信邮箱未改动**。**尚无首次提交**，等点头再做。 |
-| ⛔ 没有 Graphviz，`.dot` 从未实渲 | ✅ 已装 `16.1.0`（`C:\Program Files\Graphviz\bin\dot.exe`；**新开的 shell 才在 PATH 里**，当前会话用全路径） | 两个视图都真渲过：`request-flow.dot` 一次通过；**`dependencies.dot` 原本渲染失败** —— `trouble in init_rank` + `triangulation failed` + `lost ViewModels Storage edge`。病因：FORBIDDEN 禁止边带着 rank 约束，而其中有 `AnthropicCodec⇄OpenAiCodec`、`Core⇄StreamRelay` 两个 2-环和两个 3-环，dot 的分层器要求约束图是 DAG。修法：给那一整块加 `constraint=false`（禁令本来就不该参与布局）→ 现在 stderr 全空。**源文件是 10 条边、9 个编号**（FORBIDDEN-01 画了正反两条），下文"9 条"指编号数。 |
+第一版里单个决定都轻，整体结构却很重：第一轮标"（推荐）"的 D1 双向矩阵、D2 SQLite 都比你的原话（单向、"SQLite 或 JSON"）更重，而"轻量"原则第二轮才给、D1/D2 从没回头复核；它漏了"直通"（你点名的三个上游里两家原生说 Anthropic 协议）；Claude Code 官方网关协议（要求转发 anthropic-* 头、`count_tokens` 可选）它没查，RISK-04 写反了；代理密钥的防御理由写错（回环挡不住本机浏览器里的网页）；真相源 DSL 第 229 行就解析失败，从未能打开。旧版全文在 git `cc01023`。
 
-`.dsl` 仍未过 Structurizr 解析器（本机无 Structurizr CLI，只有 JDK 25）—— 这条没解决，但它不阻塞编码。
+## 环境与工具（已就绪）
 
-**本轮新发现的阻塞（README 以前没写）：本机没有 Claude Code。** `where claude` 无、无 `~/.claude`（只有 `~/.codex`）。OPEN-04 原计划"装好 SDK 后拿真 Claude Code 打 `count_tokens` 探针"的前提不成立 —— 要么先装客户端，要么探针退化成裸 HTTP 请求（那只能证明端点在不在，证明不了 Claude Code 是否依赖它）。
+- .NET SDK `8.0.426`（`global.json` 钉住）；Graphviz `16.1.0`（`C:\Program Files\Graphviz\bin\dot.exe`）。
+- git：仓库内 `user.email` = GitHub noreply；远程 `sonder123i/ai-gateway`（**private**），push 只走 `ssh://git@ssh.github.com:443/...`。
+- 校验 DSL：`gh release download v2025.11.09 -R structurizr/cli -p structurizr-cli.zip`，解压后
+  `java -cp "cli/lib/*" com.structurizr.cli.StructurizrCliApplication validate -workspace docs/architecture/ai-gateway.structurizr.dsl`
+  （本机 JDK 25 可跑；CLI 94MB，用完即删，不进仓库）。DSL 描述里别写尖括号（`<port>` 这类会让导出的 DOT 渲染失败）。
+- **本机没有 Claude Code**：M1 验收（S8）前要 `npm i -g @anthropic-ai/claude-code`，并需要你的 DeepSeek Key。
+- C 盘 90% 满（剩约 26G）；E 盘充裕。
 
-**环境余量**：C 盘 250G 已用 90%（剩 26G，SDK 吃掉约 2.5G）；E 盘剩 129G。无代理干扰，`api.nuget.org` 可达，`~/AppData/Roaming/NuGet/NuGet.Config` 只有 nuget.org 一个源。
+## 仍然开着
 
-## 仍然开着的（都需要实测或一次 spike，不需要产品判断）
-
-- `OPEN-04` Claude Code 对 `/v1/messages/count_tokens` 的依赖强度 —— **未实测**，我按"必须存在、可返回估算"设计。SDK 已就绪，但**本机没有 Claude Code**（见上），所以这条现在有两步：先装客户端（或退化为裸 HTTP 探针，只能证端点存在、证不了依赖），再打探针。
-- `OPEN-01` 入站 `thinking` 字段怎么降级（Claude Code 会发这个字段，D4 让 thinking 出局但它不由我们决定是否存在）。
-- `OPEN-03` Dapper vs EF Core（一次 2 小时 spike 决出，别赌）。
-- `OPEN-05` 首期是否真有 OpenAI 协议的入站客户端（双向矩阵是 D1 选型带进来的，无使用证据）。
-- `OPEN-07` 第一个接的真实 Provider 是 DeepSeek 还是 OpenAI。
+- `OPEN-11` 发布形态：依赖框架（目标机需装两个运行时）还是自包含（体积大）——S10 实测数字后由你选。
+- `OPEN-12` DeepSeek 是否接受 `?beta=true`、是否支持 `count_tokens`、错误体是否回显 Key——S8 实测。
+- `OPEN-13` IHttpClientFactory 自带日志处理器是否给鉴权头打码——S5 实测。

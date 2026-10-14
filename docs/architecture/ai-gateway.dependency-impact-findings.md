@@ -1,291 +1,95 @@
-# 模块依赖分析与变更影响 —— AI 本地代理网关
+# 程序集依赖、护栏与变更影响 —— AI 本地代理网关
 
-- 技能链：`dependency-impact-analyzer` + `graphviz`（图源）+ `c4model`（结构语义）
-- 分析粒度：**程序集（.csproj）**。比命名空间粗、比部署单元细，是 C# 里唯一能被编译器强制的耦合单位。
-- 状态：**全部 target-state**。工作区无代码，因此没有 import/manifest 证据；下述 fan-in/fan-out 是从设计意图边集算出来的，不是测出来的。
-- 图源：`docs/architecture/ai-gateway.dependencies.dot`（`rankdir=TB`，Canvas/DOT viewer 可预览）
-- 数据流图：`docs/architecture/ai-gateway.request-flow.dot`（请求生命周期 + 代理密钥替换点）
-- 机器可读违规表：`docs/architecture/ai-gateway.violations.csv`
-- **本轮补充需求（D5 轻量极简 / D6 代理密钥）落在：** §1 读图顺序、§2 耦合表 + 暴露面量化、§3 类型清单第 4/5 条、§4.4 后门边、§5 两行不可逆项、§6 第二难点、§7 四条新断言、§8 三条新未闭环项
+- **版本**：2026-10-15 修订版（D11：10 个程序集收成 3 + 1）。旧版的 10 程序集耦合表、规范模型四端口、FORBIDDEN-01/02 等已随架构作废，全文在 git `cc01023`。
+- 图源：`ai-gateway.dependencies.dot`（程序集与护栏）、`ai-gateway.request-flow.dot`（一次请求）。机器可读规则：`ai-gateway.violations.csv`。
 
-> ✅ **2026-10-14 已实渲**（Graphviz 16.1.0）。`request-flow.dot` 一次通过；`dependencies.dot` **首渲失败** —— `trouble in init_rank` 级联 `triangulation failed` / `lost ViewModels Storage edge`，根因是 `FORBIDDEN-*` 禁止边带着 rank 约束，而其中含 `AnthropicCodec⇄OpenAiCodec`、`Core⇄StreamRelay` 两个 2-环与两个 3-环，dot 分层器要求约束图必须是 DAG。修法：那一整块加 `constraint=false`（禁令本来就不该参与布局）。布局效果现已被证明。
-
----
-
-## 1. 读图顺序
-
-1. 先看 `cluster_core`（L0）—— 它是唯一允许被所有层指向的节点。
-2. 再看 L1 两个 codec 之间的空白 —— **那里没有边，这个空白就是整套架构的验收标准**。
-3. 然后看 `cluster_gateway` 的管道顺序：`HttpEndpoints → ProxyKeyAuth`（先鉴权，且它对 Security **零依赖**）→ `RouteResolver / StreamRelay → Providers`。
-4. 看 `CredInjector`：它只有一条来自 `Hosting` 的入边和一条红色的 `→ Providers` 出边 —— **这就是真实 Key 的全部暴露面**。
-5. 最后看 `cluster_hosting`：它是唯一拥有 9 条"知道具体实现"出边的节点。
-6. 红色虚线边是 `FORBIDDEN-*`（现在共 9 条），**它们不是现状，是需要被测试拦住的禁令**。
-
-> 两张图的分工：`ai-gateway.dependencies.dot` 回答「谁**能**调用谁」（编译期可达性）；`ai-gateway.request-flow.dot` 回答「密钥在哪一步被换掉」（运行时顺序）。代理密钥机制必须两张图都改 —— 只改数据流图会漏掉"鉴权器不该能解密"这条静态约束，只改依赖图会漏掉"401 的错误体形状"这条运行时约束。
-
-## 2. 耦合度（由设计边集计算，非实测）
-
-| 节点 | Ca（传入） | Ce（传出） | I = Ce/(Ca+Ce) | 判读 |
-| --- | --- | --- | --- | --- |
-| `AiGateway.Core` | **13** | 0 | **0.00** | 最大稳定核。高 Ca + 零 Ce = 抽象应该待的地方，符合稳定抽象原则 |
-| `AiGateway.Mapping.Anthropic` | 1（仅 Hosting） | 1 | 0.50 | 被 Hosting 绑定后才可达，正确 |
-| `AiGateway.Mapping.OpenAI` | 1 | 1 | 0.50 | 同上 |
-| `AiGateway.Gateway :: ProxyKeyAuth` | 1 | 2 | 0.67 | 只被 `HttpEndpoints` 调用；**对 Security 零依赖**（这是 `FORBIDDEN-07` 要保的东西） |
-| `AiGateway.Security :: CredInjector` | 1（仅 Hosting） | **2** | **0.67** | 全图唯一"只许被装配、不许被调用"的节点。2026-10-15 定稿 H 后它是 Providers HttpClient 管道里的 `DelegatingHandler`，对 Providers 的边从编译期改为运行时（Ce 3 → 2），**两个程序集互不引用** |
-| `AiGateway.Gateway :: StreamRelay` | 1 | 2 | 0.67 | 稳定度尚可，但**故障聚集点**（见 §5） |
-| `AiGateway.Gateway :: RunLog` | 1 | 2 | 0.67 | 依赖 Core + Storage，**不依赖 Security**（`FORBIDDEN-06`） |
-| `AiGateway.Providers` | **3** | **1** | **0.25** | Ce 3 → 2 → **1**：先是不再解密 Key（D6），再是不查库（D7）。**只剩 Core 一个依赖 = 全图最易单测的一层**。Ca 4 → 3：定稿 H 后注入器不再编译期依赖它，Providers 甚至不知道注入器存在——单测连假注入器都不用配 |
-| `AiGateway.Storage` | **4** | 2 | 0.33 | 传入从 5 降到 4：`Providers` 不再依赖它（D7） |
-| `AiGateway.Security` | 3 | 1 | 0.25 | 稳定，合理（能力小、被依赖多） |
-| `AiGateway.App.ViewModels` | 2 | 1 | 0.33 | 合理 |
-| `AiGateway.Hosting` | **0** | **9** | **1.00** | 最大不稳定 peripheral —— **这是设计意图，不是缺陷** |
-
-两个结论值得明说：
-
-- 这套分层里 **不存在意外热点**。`Core` 稳、`Hosting` 不稳，正是该有的形状。
-- **`Hosting` 是唯一持有具体 codec / 注入器类型的地方**。将来若加第二个入口（headless 服务 / CLI），绑定清单会在两处重复从而漂移。→ 阶段 4 前就应把"绑定清单"做成一个可复用扩展方法，而不是内联在 `App.xaml.cs` 里。
-
-### D6（代理密钥）在依赖图上换来的量化收益
-
-补充需求之前，真实 Key 的取用路径是 `upstreamClients → repositories → secretProtector`，也就是说**任何能调用 `upstreamClients` 或读到 `repositories` 的代码，都顺带拥有了拿到明文 Key 的能力**。按扇入计数，那是一个 **3 个调用方**（StreamRelay、Hosting、Failover）的暴露面。
-
-改完之后：
-
-- 真实 Key 明文的出现面 = **1 个节点（`CredInjector`）+ 1 条边（`CredInjector → Providers`）**。
-- `Ca(CredInjector) = 1`，且那唯一一条入边来自 `Hosting`（组合根），**没有任何业务组件调用它** —— 它是被"装配"的，不是被"调用"的。
-- 鉴权侧彻底断开：`Ca(Security)` 里不再有 Gateway 组件，`ProxyKeyAuth` 对 `Security` 的依赖被 `FORBIDDEN-07` 禁掉。
-
-这条收益可以用一次 grep 验收：**全工程里调用 DPAPI 解密的位置应当恰好为一处**。多于两处，就说明有人开了第二条后门 —— 而这正是"代理密钥"这个设计能否成立的唯一判据。
-
-### D7–D10 的净效果：删边与去状态，不是加层
-
-补充需求听起来像"加一个中间件"，实际这四个选择把图**变小了**：
-
-| 选择 | 净变化 |
-| --- | --- |
-| D7 路由只来自全局激活档 | **删 2 条编译期边**：`RouteResolver → Storage`、`Providers → Storage`；`RequestContext` 里没有路由字段，鉴权器与路由彻底解耦 |
-| D8 只存哈希、不可回显 | `Security` 的职责范围**不变大**（它只服务真实 Key），代理密钥路径上不存在解密调用 |
-| D9 地址写死回环 | **删 1 个配置面 + 删 1 个 UI 开关**：监听不再是可变状态，只有端口是 |
-| D10 只做定时安全比较 | 鉴权器**零可变状态** → 天然满足 `RISK-05` 的无状态要求，无需为它写并发测试 |
-
-一句话把这四条合起来的含义说透，别让它被"代理密钥"这个名字拔高：**在这个监听范围与这组防护档位下，代理密钥不是网络安全边界，它是「撤销 + 防误操作」机制** —— 它保证真实 Key 永远不出现在客户端配置文件里、并且能一键收走某个客户端的访问权。这依然是很值的设计，但它是**运维价值而不是防御纵深**。将来若有人加 LAN 开关，`⑤⑥` 与爆破风险必须重评，不能沿用今天的结论 —— 这句已写进 `request-flow.dot` 的 `threat` 节点，免得只剩文档记忆里才有。
-
-## 3. .NET 特有事实：程序集环不是"坏味道"，是编译错误
-
-Java/JS 里循环依赖是债务；在 .NET 里 `CS0146 / A circular dependency was detected` 直接构建失败。这带来一个真实的推论：
-
-> 你**不会**遇到环，但你会反复遇到"我需要引用那个程序集才能拿到这个类型"。那一刻的便宜做法是加引用（然后撞上环、被迫把类型搬进 Core）；正确做法是**从一开始就把跨层共享类型放进 Core**。
-
-已识别的五个"必然要搬进 Core"的类型 —— 提前放对位置比事后搬家便宜：
-
-1. 激活档快照（UI 写、Gateway 读）—— 见 §4.1
-2. 每请求工具调用累积状态（`StreamContext`）—— 见 §4.3
-3. 规范 usage / stop_reason / 错误载荷（含 **按入站协议区分的 401 错误体形状**）—— 已在 Core
-4. **`RequestContext`**（已认证的代理密钥身份 + 其 RouteProfile + 请求中止令牌）：鉴权器产出、路由消费，两侧跨程序集，只能落 Core
-5. **`ProxyKeyFingerprint`**（一个只包裹前缀片段的新类型，不包裹完整密钥）：这是 `FORBIDDEN-06` 从"审查条款"变成**编译器条款**的机制 —— 日志写入器的参数类型是 `ProxyKeyFingerprint`，谁想塞明文就必须先显式构造它，而那会在 code review 里刺眼。类型即护栏。
-
-> 第 5 条是这套设计里最便宜的强约束：**用类型而不是规则来守边界**。一条自然语言规则会被忘，一个不接受 `string` 的方法签名不会。
-
-### 3.1 实测记录（2026-10-15，S1 骨架）：本图的组件级边集**不能**直接落成程序集引用
-
-按 `ai-gateway.dependencies.dot` 的编译期边原样建 10 个 csproj，`dotnet build` 立刻失败：
+## 1. 为什么是 3 + 1 个项目
 
 ```
-error MSB4006: 涉及目标"_GenerateRestoreProjectPathWalk"的目标依赖项关系图中存在循环依赖项。
-  [src\AiGateway.Security\AiGateway.Security.csproj]
-  [src\AiGateway.Hosting\AiGateway.Hosting.csproj]
+AiGateway.App (WinExe, net8.0-windows) ──► AiGateway (net8.0)
+           │                                      ▲
+           └──────────► AiGateway.Security ───────┘   (net8.0-windows，唯一引用 ProtectedData)
+AiGateway.Tests ──► 以上全部（InternalsVisibleTo）
 ```
 
-两处环，都不是意外，而是"组件级图"压到"程序集级图"时的必然折叠产物：
+**只有"密钥"这条脊柱值得一道编译期边界。** 判断标准：拆出一个程序集，必须换来"编译器替你拦住某类错误"。
 
-| 环 | 组成 | 修正 | 修正后的额外收益 |
-| --- | --- | --- | --- |
-| **C1** | `Storage → Security`（存密文要加密）⇄ `CredInjector → Storage`（注入要取密文） | 删 `Storage → Security`。Storage 只存取字节；加解密全在 Security，方向唯一。"保存真实 Key"这个用例改由 Core 端口 `IRealKeyVault` 承担，实现落在 Security，App 只见端口。**该端口必须只写**（Save / Delete / Exists，**不得有任何返回或写出明文的方法**）——见下方 review 更正 | 能经**程序集引用**触达 `SecretProtector` 的程序集变少了（原图里 Gateway 经 `Storage → Security` 可传递触达 Security）。**只在引用这一层成立**：Core 端口对所有程序集可见，所以端口一旦能读，这条收益就作废 |
-| **C2** | `Hosting → ViewModels`（装配 VM）⇄ `App → Hosting`（入口调 `AddAiGateway()`） | 删 `Hosting → ViewModels`。组合根只绑非 UI 的具体实现，VM 由可执行入口自己注册。**副作用**：SDK 的 ProjectReference 默认传递，`App → Hosting` 让 UI 不改 csproj 就能 `new` 出 Security / Storage 的类型（review 探针 exit=0），打穿 FORBIDDEN-03/03b/08 的引用层。已在 App 设 `DisableTransitiveProjectReferences=true` 关上（越界用法变 CS0234，运行时 dll 照常拷贝） | D3 的"`AiGateway.App.exe` 是唯一可部署单元"成立，且第二个入口（headless/CLI）引用 Hosting 时不会被拖进 WPF —— 正是 §2 结尾担心的那个重复问题 |
+| 边界 | 要拦住的错误 | 守法 |
+| --- | --- | --- |
+| AiGateway **不引用** Security | 网关 / 鉴权 / 日志代码拿到解密能力（FORBIDDEN-06/07） | 编译期：引用方向只有 Security → AiGateway |
+| 只有 Security 引用 ProtectedData | 有人在别处直接调 DPAPI | 编译期：包引用；AiGateway 目标 `net8.0`，就算加了包，Windows 专属 API 也会触发 CA1416（警告即错误，S1 review 实测过这条） |
+| App 看不见两个库的内部类型 | UI 直接 `new` 出保护器或注入器（FORBIDDEN-03/08） | `internal` 默认 + 每个库只公开一个注册方法 |
+| 协议代码分不分程序集 | ——（入站只有一种协议，不存在两个 codec 互引） | 不拆 |
 
-> **review 更正（2026-10-15）—— Core 端口是一扇 DI 后门，引用层防线管不到它。** 端口放在 Core，而每个程序集都引用 Core，所以任何类都能在构造函数里要一个端口实例。若 `IRealKeyVault` 有 `Get`，Gateway 注入它就拿到明文，此时**三层防线全绿**：`RequestContext` 里没有 Key 字段（类型层）、Gateway 不引用 Security（引用层）、全工程解密调用点仍恰好 1 处（grep 验收）—— 没有任何测试会红。所以：**凡是放进 Core、实现在 Security 的端口，都必须在签名上就拿不到明文**；做不到的，只能靠 ArchUnitNET 的"谁可以依赖这个端口"白名单守，而那比"类型不可命名"弱一档。
+第一版拆成 10 个程序集，大部分边界拦的是"两个 codec 互引""Core 反向依赖"这类在单入站下不存在的错误；代价却是实打实的：S1 骨架撞出两处程序集环（MSB4006）和一处传递引用泄露。
 
-**这条经验值得留在文档里**：组件图与程序集图不是一个粒度。图上一个节点对应一个组件，而环是在**程序集**上判定的；同一程序集内的两个组件之间的边无害，跨程序集折叠后就可能成环。所以任何"照图建引用"的动作，第一步必须是 `dotnet build` 而不是写代码 —— S1 存在的意义就在这里。
+## 2. 护栏
 
-修正后的可编译引用清单（**2026-10-15 review 后以 fresh clone 构建验收**；首版只在本机绿——`.gitignore` 的 `*.app` 在 Windows 大小写不敏感下吞掉了整个 App 项目，推上去的仓库 `MSB3202` 构建失败）：
+**一个测试文件**：
 
-```
-Core                     → （空，FORBIDDEN-02 的机器化前提）
-Mapping.Anthropic / .OpenAI → Core
-Providers                → Core
-Storage                  → Core
-Security                 → Core, Storage        ← 刻意不含 Providers，见下
-Gateway                  → Core, Storage, Providers
-Hosting                  → Core, Gateway, Mapping.*, Providers, Storage, Security
-App (WinExe)             → Core, Hosting        ← DisableTransitiveProjectReferences=true
-ArchitectureTests        → 以上全部
-```
+| # | 断言 | 拦什么 |
+| --- | --- | --- |
+| ① | AiGateway 程序集的 `GetReferencedAssemblies()` 不含 `AiGateway.Security` | 有人给 AiGateway 加 Security 引用 |
+| ② | 全 `src/` 里 `ProtectedData.Unprotect` 恰好出现 1 次，且在注入处理器 | 第二个解密点 |
+| ③ | `src/AiGateway.Security/` 源码里不出现 `HttpClient`、`IHttpClientFactory`、`SocketsHttpHandler`、`HttpClientHandler`、`new HttpRequestMessage`（`base.SendAsync` 除外） | 注入器自己发请求（FORBIDDEN-09） |
+| ④ | `IRealKeyVault` 的所有成员返回 `void` / `bool` / `Task` / `Task<bool>` | 只写端口被加上读方法（FORBIDDEN-10） |
+| ⑤ | 吊销一个代理密钥后，下一个请求返回 401 | 内存快照没随写入替换（DECIDED-01） |
 
-**`dependencies.dot:99` 的 `CredInjector → Providers` 不落成引用 —— 2026-10-15 定稿为 H（Hosting 装配的管道处理器）。** 三个候选：
+②③ 是源码级 grep 断言，粗糙但够用：它们守的是"出现了就一定该有人看一眼"的东西。ArchUnitNET 不再需要。
+
+**类型护栏**（不用测试，签名本身就拦）：
+- 日志写入器只接受 `ProxyKeyFingerprint`（只包前缀片段的类型），不接受 `string`——想塞明文就得显式构造它，review 时刺眼（FORBIDDEN-06）。
+- 鉴权产出的请求上下文**没有任何密钥字段**，"顺手把真实 Key 带下去"在类型上不成立。
+- 翻译器无状态单例，每请求状态（块索引游标、工具参数累积、usage）放在每请求的上下文对象里，防并发串流（RISK-05）。
+
+## 3. S1 实测留下的教训（仍然有效）
+
+这些是第一版骨架在本机撞出来的，换个结构也会复现：
+
+- **组件图 ≠ 程序集图**：同一程序集内两条边无害，折叠到程序集上可能成环。照图建引用，第一步必须是 `dotnet build`。
+- **`.gitignore` 的 `*.app`** 在 Windows（`core.ignorecase=true`）下会吞掉任何名字以 `.App` 结尾的项目目录：本地构建照样绿，推上去的仓库却缺项目。已加负规则 `!/src/AiGateway.App/`。
+- **`TreatWarningsAsErrors` 管不到 MSBuild 警告**："引用的项目不存在"只是警告，构建 exit 0。已加 `MSBuildTreatWarningsAsErrors`。
+- **SDK 的 ProjectReference 默认传递**：A → B → C 会让 A 直接看见 C。新结构里 App 本来就直接引用两个库，所以靠 `internal` 而不是靠"看不见程序集"来守 UI。
+- **"全绿"只认 fresh clone**：`git status` 干净时看不到被忽略的文件。
+
+## 4. 两扇差点打开的后门（D12 / D13 的来历）
+
+**公共端口是一扇 DI 后门。** 公开的接口对引用它的所有代码可见，任何类都能在构造函数里要一个实例：
+
+- `IRealKeyVault` 若有 `Get`，网关注入它就拿到明文——此时"类型层、引用层、解密点计数"三层防线**全绿**。⇒ D13：只写。
+- 注入器接法三选一：
 
 | 接法 | 问题 | 结论 |
 | --- | --- | --- |
-| 照图补 `Security → Providers` | Security 在类型上就能调 `UpstreamClients` 发请求 = FORBIDDEN-09 要防的第二条外发路径 | ✗ |
-| 注入器端口放 Core（`Apply(providerId, headerSink)`），Providers 调用 | **与 `IRealKeyVault` 同一扇 DI 后门**：端口全员可见，任何类注入它、自己传 sink 就接走明文；类型层、引用层都失守，只剩一条"谁能依赖它"的测试白名单 | ✗（曾被我推荐过，review 时自我推翻） |
-| **H：注入器是 Security 里的 `DelegatingHandler`，Hosting 把它挂进 Providers 的 HttpClient 管道** | 代价：Security 要依赖 `System.Net.Http` 的 `DelegatingHandler`，FORBIDDEN-09 检测规则须从"不依赖 System.Net"改为精确意图（见 §7） | ✓ |
+| Security 引用上游客户端并调用它 | Security 在类型上就能发请求（FORBIDDEN-09） | ✗ |
+| 注入器做成公共端口（`Apply(providerId, headerSink)`），上游客户端调用 | 同一扇 DI 后门：任何类注入它、自传 sink 就接走明文 | ✗（我曾推荐过，review 时推翻） |
+| **H：注入器是 `DelegatingHandler`，组合根把它挂进上游 HttpClient 管道** | Security 要依赖 `System.Net.Http` 的 `DelegatingHandler`；FORBIDDEN-09 的检测改为精确意图（护栏③） | ✓ D12 |
 
-H 的三个收益：**无人可调用**（Gateway、App 连类型名都写不出，类型层 + 引用层都守得住）；**Providers 代码不经手明文**、也不知道注入器存在；正好是 §2 原本写的"被装配，不被调用，唯一入边来自 Hosting"。Provider 身份经请求选项传递，键名是 Core 里的一个字符串常量（Core 仍不碰 System.Net）。
+H 的收益：没有任何代码能调用注入器；上游客户端不经手明文、甚至不知道注入器存在；provider id 经请求选项传递，键名是 AiGateway 里的一个字符串常量。
 
-**S11 必须实测一件事**：`IHttpClientFactory` 自带的请求日志处理器排在注入器内侧（更靠近网络），它记录的 `Authorization` 头值是否被打码——默认行为我没核实过，不能假设。
+## 5. 变更影响（哪个改动最贵）
 
-## 4. 切断点分析：三条会自然长出来的边/环，如何在设计期消掉
-
-### 4.1 激活态（同进程决定的必然产物）
-
-WPF UI 与 Kestrel 同进程，所以"当前激活模型"**没有进程边界保护**。
-
-- 若实现放在 `Gateway` 或 `App`：`ViewModels → Gateway` 立刻成环（编译失败）。
-- 方案：**接口 `IActivationState` 进 Core，实现放 Hosting 注册为 Singleton，UI 与 RouteResolver 各自只依赖接口。**
-- 剩下的真问题是**内存可见性**，不是依赖。切换必须对并发请求原子可见：写入时替换一个**不可变快照引用**（`Volatile.Read` / `Interlocked.Exchange`），而不是原地改字段。C4 里 `ActivationState` 已标注为"不可变快照 + 变更事件"，就是这条。
-- 风险登记：`FORBIDDEN-03`。
-
-### 4.2 流式回写（runtime 是环，compile-time 必须不是）
-
-真实数据流是**闭环**的：
-
-```
-HttpEndpoints → 解码 → Providers → 上游 SSE → StreamRelay → 编码 → 写回 HttpEndpoints.Response
-```
-
-若 `StreamRelay` 直接持有 `HttpContext` 去 `WriteAsync`，`StreamRelay` 就依赖了传输层，而 `HttpEndpoints` 又依赖 `StreamRelay` —— 环。
-
-**采用方案 B：管道不碰 HttpContext。**
-
-```
-Core 端口（每协议对 4 件）：
-  IInboundRequestDecoder    入站线格式 → CanonicalRequest
-  IOutboundRequestEncoder   CanonicalRequest → 出站线格式
-  IOutboundStreamDecoder    上游原始帧 → CanonicalDelta（累积态在此，非 codec 字段）
-  IInboundEventEncoder      CanonicalDelta → 入站事件序列
-
-StreamRelay : 接收 IAsyncEnumerable<CanonicalDelta>，产出 IAsyncEnumerable<InboundEvent>
-HttpEndpoints : 按 (入站协议, 目标 Provider) 从工厂取那 4 件，负责 Write + Flush + Abort
-```
-
-三个直接收益：
-
-1. **编译期单向**，环消失。
-2. **协议配对是运行时装配决定**，不是依赖关系 —— 新增第三种协议时两个已有 codec 零改动。
-3. `StreamRelay` 可用 golden fixture 单元测试，不需要真起 Kestrel。
-
-`Flush` 时机仍留在 `HttpEndpoints`（它是唯一知道 `IHttpResponseBodyFeature` 的人）；`StreamRelay` 只做纯变换。**这一条务必保持，否则纯管道会被污染成需要集成测试才能验证。**
-
-### 4.3 无状态 codec
-
-codec 若用实例字段累积 `arguments` 分片，多会话并发会互相串流（Claude Code 后台并行子代理很常见）。
-
-- 规则：所有 codec 注册为 **Singleton 且无可变实例字段**；每请求状态放进由 `HttpEndpoints` 创建的 `StreamContext`（含 `content_block` 索引游标、tool 累积缓冲、`usage` 累加器）。
-- 风险登记：`RISK-05`。
-
-### 4.4 代理密钥：一条会自然长出来的"后门边"（D6 新增）
-
-这条不是环，是**比环更可能的东西** —— 它在实现时看起来完全合理：
-
-> 「我在鉴权器里已经查到这个代理密钥对应的 RouteProfile 了，顺手把真实 Key 也取出来放进 RequestContext，下游就不用再查一次库了。」
-
-一旦这样写，`ProxyKeyAuth → Security` 这条边成立，于是：
-
-1. 鉴权器的**每一条失败路径**（401、密钥被禁用、Profile 缺失）都站在了明文 Key 的可达范围内；
-2. `RequestContext` 里出现一个 `string RealApiKey` 字段，而 `RequestContext` 是日志器最自然的输入对象 —— 真实 Key 离日志只差一次 `ToString()` 或一次 JSON 序列化；
-3. §2 里"暴露面 = 1 个节点 1 条边"的可验证性**当场作废**，而且没有任何测试会红。
-
-防线按成本从低到高，三层都要：
-
-| 防线 | 做法 | 拦住什么 |
-| --- | --- | --- |
-| 类型 | `RequestContext` **不含**任何密钥字段，只含 `ProxyKeyFingerprint` + `RouteProfileId`（一个 id，不是凭据） | "顺手带上 Key"在类型上不成立 |
-| 引用 | `AiGateway.Gateway`（鉴权所在）**不引用** `AiGateway.Security` | 想调用解密要先改 csproj，改动可见 |
-| 测试 | ArchUnitNET 断言 `ProxyKeyAuth` 不依赖 `Security`；并断言 `Security` 的解密方法只有 `CredInjector` 所在类型能触达 | 漂移会被 CI 拦 |
-
-配套的一次性验收：**全工程 DPAPI 解密调用点计数必须为 1**。这是 grep 就能做的检查，也是 D6 整个机制成立与否的唯一判据。
-
-## 5. 影响半径（哪个改动最贵）
-
-| 变更 | 直接触及 | 半径 | 验证成本 |
+| 变更 | 触及 | 半径 | 验证成本 |
 | --- | --- | --- | --- |
-| 新增一种入站/出站协议 | 新 codec 程序集 + 1 条 Hosting 绑定 + RouteResolver 1 个分支；**两个已有 codec 零改动** | 小 | 低 —— 纯 fixture 回放 |
-| 给 CanonicalModel 加可选字段（如 `cache_read_input_tokens`） | Core + 2 codec + StreamRelay + 测试 | 中 | 中 |
-| 改鉴权头形态（`Authorization` vs `x-api-key`） | Providers + CredInjector | 小 | 低 |
-| 吊销 / 禁用一个代理密钥 | 只影响 `ProxyKeyAuth` 下次校验；按 D7 **不改变任何路由**，按 D10 **无缓存所以天然即刻生效** | 小 | **低** —— 一个集成测试断言下一个请求 401 即可，无需失效广播 |
-| 改「一键切换」的语义（全局 ⇄ 每密钥） | 若要转向每密钥钉死：`RequestContext` 加路由字段、鉴权器开始查 Profile、`routeResolver` 重新依赖 `Storage`、UI 多一层 | **大且方向相反** | 高 —— 等于把 D7 删掉的边全部加回来 |
-| **改 SSE Flush / 事件顺序** | HttpEndpoints + StreamRelay + AnthropicCodec | **大** | **高 —— 只有真跑 Claude Code 才暴露** |
-| **改 DPAPI scope / entropy** | Security + gateway.db | **不可逆** | 已存真实 Key 密文全废，需"全部重录 Key" |
-| **改代理密钥哈希方案（含是否加盐）** | ProxyKeyAuth + 全部已发放密钥 | **不可逆** | 已发放的代理密钥**全部无法校验**，所有客户端要重填 |
-| 换 ORM（Dapper ⇄ EF Core） | Storage + 迁移；Core 端口不变 | 小 | 中 |
-| WPF UI ⇄ 独立 sidecar 进程 | 推翻 §4.1，`IActivationState` 需 IPC 版本 | 大 | 高 |
+| 新增一个说 Anthropic 协议的上游（Kimi、智谱等） | 一条 Provider 配置 | 极小 | 一次真实请求 |
+| 新增一个说 OpenAI 协议的上游 | 一条 Provider 配置（翻译器已存在之后） | 小 | 一次带工具调用的真实请求 |
+| 新增一种非 Anthropic、非 OpenAI 协议的上游 | 新翻译器 + 路由一个分支 | 中 | fixture 回放 + 真实请求 |
+| 一键切换改成"每密钥独立路由" | 鉴权器开始读路由、快照结构变、UI 多一层 | 大且方向相反 | 等于推翻 D7 |
+| 改直通的头 / 查询串处理 | 直通转发器 | 小 | **高——只有真跑 Claude Code 才暴露** |
+| 改翻译的事件顺序 / 块索引 | 翻译器 + 工具调用重编码 | 大 | **高——同上** |
+| 加 OpenAI 协议的入站客户端 | 新入站端点 + 反向翻译 + OpenAI 形状错误体 | 大 | 高；D1 已明确不做 |
+| **改 DPAPI 作用域 / entropy 方案** | Security + config.json | **不可逆** | 已存 Key 全部要重录 |
+| **改代理密钥哈希方案（含加盐）** | 鉴权器 + 全部已发放密钥 | **不可逆** | 所有客户端要重填 |
+| JSON ⇄ SQLite | 配置存储一个组件 | 小 | 中 |
+| UI 与网关拆成两个进程 | 激活快照与密钥快照都要 IPC | 大 | 高；D3 已明确不做 |
 
-注意表中两行标着「不可逆」的条目构成一组对称：**两处加密决策都是单向门**，都便宜在"事前"、昂贵在"事后"。它们是这张表里唯二"改了就救不回来"的条目 —— 其余行半径再大，方向都能折返。
+两处"不可逆"都是加密决策，便宜在事前、昂贵在事后——所以 `protector_id` / `key_version` / `algo_version` / `enabled` 四个字段在写第一条数据前就要进 JSON 结构（计划 S2）。
 
-**三个高价值前瞻约束（现在做便宜，以后做贵）：**
+## 6. 难点
 
-1. `gateway.db` 的 secret 表必须有 `protector_id` + `key_version`，否则将来从 DPAPI 迁移到信封加密时无法识别哪些行是老密文。这是 `RISK-01` 的免费保险。
-2. `StreamContext` 的块索引游标必须与 `content_block_start/stop` 严格配对 —— Claude Code 收到乱序 `content_block_index` 会直接断流。这条只能在真实客户端上验证，所以要**尽早做端到端探针**，不要等全部写完。
-3. 代理密钥表同样需要 `algo_version` + `enabled` 位。理由与第 1 条同构：日后想从裸 SHA-256 换到加盐/慢哈希时，没有版本列就无法做"老哈希继续可用、新密钥用新算法"的平滑过渡。同时**生成端就决定"事后能否回显"**（见 §8），这个选择一旦写入第一条记录就固化。
+1. **直通保真**（M1）：头（`anthropic-version`、`anthropic-beta`）、查询串（`?beta=true`）、只改顶层 `model` 而其余字段不变、SSE 逐块 flush、客户端中止传播到上游。难度低，但任何一处错都只在真 Claude Code 上暴露——所以 M1 以真客户端验收收尾。
+2. **工具调用增量重编码**（M2）：OpenAI `tool_calls` 是扁平分片（`index` 定位、首片带 `id`+`name`、后续只追加 `arguments`、没有结束标记）；Anthropic 要求显式块生命周期（`content_block_start` → N × `input_json_delta` → `content_block_stop`）。必须凭空构造块边界：何时敢发 start（等 name 到齐）、文本块与多个并行工具块的索引如何共存、收尾时未完成的 JSON 怎么办。这是"一种协议没有、另一种强制要求"的信息，不是接口不匹配。
 
-## 6. 核心难点（值得单独盯）
+## 7. 尚未闭环
 
-**流式工具调用的增量重编码。**
-
-OpenAI 的 `tool_calls` 是**扁平分片**：`index` 定位、第一个分片带 `id`+`function.name`、后续分片只追加 `function.arguments` 字符串，且**没有结束标记**（只靠 `finish_reason: "tool_calls"` 或 `data: [DONE]` 隐含收尾）。
-
-Anthropic 要求**显式块生命周期**：`content_block_start(type=tool_use, id, name)` → N × `content_block_delta(partial_json)` → `content_block_stop`。
-
-于是你必须**凭空构造出块边界**：决定何时敢发 `content_block_start`（要等 name 到齐）、`index` 与 `content_block` 序号如何共存（text 与多个并行 tool call 混排）、以及收尾时把未完成的 JSON 怎么办。
-
-这不是"接口不匹配"，而是**一种协议根本没有、另一种协议强制要求的信息**。它就是 `ToolCallSession` 必须待在 Core、且必须有独立 golden-fixture 测试的原因。
-
-**第二难点（D6 之后新增，难度低但出错率高）**：401 与上游错误体的**协议形状保真**。鉴权失败发生在你还没解析入站协议之前，所以你必须在"只知道请求头"的情况下判断该用哪种错误 JSON —— 实践做法是按路径判（`/v1/messages` → Anthropic 形状，`/v1/chat/completions` → OpenAI 形状），而不是按客户端头判。这条不值得单独一层抽象，但值得一条契约测试。
-
-## 7. 治理：怎么把上面这些变成机器能拦的
-
-在 `AiGateway.ArchitectureTests`（xUnit）里用 **ArchUnitNET** 断言，成本一个测试文件：
-
-```
-Mapping.Anthropic 不依赖 Mapping.OpenAI（及反向）
-Core 不依赖任何本解决方案其他程序集
-App 不依赖 Storage / Security / Gateway
-Gateway 不依赖 App
-Providers/Storage 之外不得引用 Microsoft.Data.Sqlite          ← FORBIDDEN-05/08
-Gateway 的鉴权侧（ProxyKeyAuth）不依赖 Security                ← FORBIDDEN-07
-RunLog / 日志写入器不依赖 Security                             ← FORBIDDEN-06
-Security 只能改经过它的请求，不能自己发：允许 DelegatingHandler /   ← FORBIDDEN-09（定稿 H 后改写；
-  HttpRequestMessage 头部；禁止 HttpClient / IHttpClientFactory /        原"不依赖 System.Net"当天就会红）
-  SocketsHttpHandler / HttpClientHandler、禁止构造 HttpRequestMessage
-Security 与 Providers 互不引用                                         ← FORBIDDEN-09 / §3.1
-DPAPI 解密调用点计数 == 1                                      ← §4.4 一次性验收
-```
-
-四条 `FORBIDDEN-06/07/08/09` 全部来自本轮补充需求。**只有测试能防漂移，清单不能**；而其中"解密点计数 == 1"甚至不需要 ArchUnitNET，一个 grep 断言就够。
-
-## 8. 尚未闭环（不假装已解决）
-
-### 已在第二轮澄清中决出（D7–D10，全部取最轻档）
-
-**代理密钥机制原有的三条未闭环项 —— 已决：**
-
-- `UNKNOWN-04` **已决 D7：路由全部跟随全局激活档，代理密钥不含路由信息。** 直接后果要说清：**多个客户端无法同时使用不同模型** —— 所有入站客户端共享同一个"当前激活模型"。若将来需要"这个客户端走 DeepSeek、那个走 Claude"，那不是加配置，而是把 D7 删掉的边全部加回来（见 §5 表）。
-- `UNKNOWN-05` **已决 D8：只存 SHA-256 哈希，生成后不可回显。** 代价：忘了就重新生成、所有客户端配置要重填。无盐、不用慢哈希在这里是正当的，因为密钥由程序生成、是高熵随机值而非人写口令 —— 这条理由要留在文档里，否则将来一定有人"顺手"把它升级成 PBKDF2 并给 `enabled` 检查加一次派生开销。
-- `UNKNOWN-06` **已决 D9 + D10：地址写死 `127.0.0.1`（只有端口可改），失败防护只做定时安全比较，不加计数与退避。** 因此鉴权器零可变状态。
-- `RISK-02` 随之**降级为低**：LAN 暴露面在本设计里不存在，`⑤⑥` 两条不变式只在"将来有人加 LAN 开关"时才需要重评。
-
-仍然开着的：
-
-- `UNKNOWN-01` 存储访问选型 Dapper vs EF Core —— 一次 spike 即可决出，不要现在赌。
-- `UNKNOWN-02` 首期是否真服务 OpenAI 协议入站客户端（双向矩阵是被 D1 选型带进来的，无使用证据）。
-- `UNKNOWN-03` thinking 透传 / 故障转移 的范围（请求日志已按 D5 以基础形态回归 MVP）。
-- `RISK-04` Claude Code 对 `/v1/messages/count_tokens` 的实际依赖程度 —— **需实测**，我按"必须存在、可返回估算"设计，未经证实。
-- `OPEN-07` 第一个要接的真实 Provider 是 DeepSeek 还是 OpenAI —— 影响 profile 优先级，与 `RISK-04` 同批实测。
-
-## 9. 下一步
-
-阶段 4 开工前的硬阻塞（本机无 .NET SDK）**已于 2026-10-14 清除**：SDK `8.0.426` 装好并真编译过 `net8.0-windows`。
-
-下一步是把本模型拆成带依赖顺序的实现计划，且计划里必须**先**排这三件事，不能等全部写完再补：
-1. `UNKNOWN-01` 存储选型（Dapper vs EF Core）用一次 spike 决出，不要赌。
-2. `RISK-04` + §5 前瞻约束第 2 条要求**尽早做真客户端端到端探针**（`count_tokens` 依赖强度、`content_block_index` 配对），用一个桩服务即可，不必等管道写完。
-3. 两处单向门（DPAPI scope/entropy、代理密钥哈希方案）必须在**写入第一行数据之前**把 `protector_id`/`key_version`/`algo_version`/`enabled` 四列建进 schema。
+见 `ai-gateway.violations.csv` 中状态为 OPEN 的行，以及 `ai-gateway.architecture-understanding.md` §7。
