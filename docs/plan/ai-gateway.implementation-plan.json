@@ -68,7 +68,7 @@
         "ToolCallSession 进 Core",
         "RequestContext：只含 ProxyKeyFingerprint + RouteProfileId + 中止令牌，不含任何密钥字段",
         "ProxyKeyFingerprint 新类型（只包前缀片段，不包完整密钥）",
-        "IRealKeyVault 端口（S1 实测新增：保存/取用真实 Key 的用例入口，实现落在 Security，App 只见端口 —— 缺了它 S5 就会被迫把 Storage→Security 那条环加回来）",
+        "IRealKeyVault 端口，**只写**：Save / Delete / Exists，不得有任何返回或写出明文的方法（S1 实测新增：保存真实 Key 的用例入口，实现落在 Security，App 只见端口 —— 缺了它 S5 就会被迫把 Storage→Security 那条环加回来；S1 review：Core 端口对所有程序集可见，能读就是 DI 后门且类型/引用/grep 三层防线全绿）",
         "IActivationState + 不可变快照契约（实现留给 S13）"
       ],
       "executionFit": "fits-one-run",

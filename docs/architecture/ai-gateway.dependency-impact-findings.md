@@ -100,24 +100,28 @@ error MSB4006: 涉及目标"_GenerateRestoreProjectPathWalk"的目标依赖项�
 
 | 环 | 组成 | 修正 | 修正后的额外收益 |
 | --- | --- | --- | --- |
-| **C1** | `Storage → Security`（存密文要加密）⇄ `CredInjector → Storage`（注入要取密文） | 删 `Storage → Security`。Storage 只存取字节；加解密全在 Security，方向唯一。"保存真实 Key"这个用例改由 Core 端口 `IRealKeyVault` 承担，实现落在 Security，App 只见端口 | 能触达 `SecretProtector` 的程序集**变少**了 → §2 那条"暴露面 = 1 节点 1 边"的论证比原来更强，不是更弱 |
-| **C2** | `Hosting → ViewModels`（装配 VM）⇄ `App → Hosting`（入口调 `AddAiGateway()`） | 删 `Hosting → ViewModels`。组合根只绑非 UI 的具体实现，VM 由可执行入口自己注册 | D3 的"`AiGateway.App.exe` 是唯一可部署单元"成立，且第二个入口（headless/CLI）引用 Hosting 时不会被拖进 WPF —— 正是 §2 结尾担心的那个重复问题 |
+| **C1** | `Storage → Security`（存密文要加密）⇄ `CredInjector → Storage`（注入要取密文） | 删 `Storage → Security`。Storage 只存取字节；加解密全在 Security，方向唯一。"保存真实 Key"这个用例改由 Core 端口 `IRealKeyVault` 承担，实现落在 Security，App 只见端口。**该端口必须只写**（Save / Delete / Exists，**不得有任何返回或写出明文的方法**）——见下方 review 更正 | 能经**程序集引用**触达 `SecretProtector` 的程序集变少了（原图里 Gateway 经 `Storage → Security` 可传递触达 Security）。**只在引用这一层成立**：Core 端口对所有程序集可见，所以端口一旦能读，这条收益就作废 |
+| **C2** | `Hosting → ViewModels`（装配 VM）⇄ `App → Hosting`（入口调 `AddAiGateway()`） | 删 `Hosting → ViewModels`。组合根只绑非 UI 的具体实现，VM 由可执行入口自己注册。**副作用**：SDK 的 ProjectReference 默认传递，`App → Hosting` 让 UI 不改 csproj 就能 `new` 出 Security / Storage 的类型（review 探针 exit=0），打穿 FORBIDDEN-03/03b/08 的引用层。已在 App 设 `DisableTransitiveProjectReferences=true` 关上（越界用法变 CS0234，运行时 dll 照常拷贝） | D3 的"`AiGateway.App.exe` 是唯一可部署单元"成立，且第二个入口（headless/CLI）引用 Hosting 时不会被拖进 WPF —— 正是 §2 结尾担心的那个重复问题 |
+
+> **review 更正（2026-10-15）—— Core 端口是一扇 DI 后门，引用层防线管不到它。** 端口放在 Core，而每个程序集都引用 Core，所以任何类都能在构造函数里要一个端口实例。若 `IRealKeyVault` 有 `Get`，Gateway 注入它就拿到明文，此时**三层防线全绿**：`RequestContext` 里没有 Key 字段（类型层）、Gateway 不引用 Security（引用层）、全工程解密调用点仍恰好 1 处（grep 验收）—— 没有任何测试会红。所以：**凡是放进 Core、实现在 Security 的端口，都必须在签名上就拿不到明文**；做不到的，只能靠 ArchUnitNET 的"谁可以依赖这个端口"白名单守，而那比"类型不可命名"弱一档。
 
 **这条经验值得留在文档里**：组件图与程序集图不是一个粒度。图上一个节点对应一个组件，而环是在**程序集**上判定的；同一程序集内的两个组件之间的边无害，跨程序集折叠后就可能成环。所以任何"照图建引用"的动作，第一步必须是 `dotnet build` 而不是写代码 —— S1 存在的意义就在这里。
 
-修正后的可编译引用清单（已落地，`dotnet build` 0 警告 0 错误）：
+修正后的可编译引用清单（**2026-10-15 review 后以 fresh clone 构建验收**；首版只在本机绿——`.gitignore` 的 `*.app` 在 Windows 大小写不敏感下吞掉了整个 App 项目，推上去的仓库 `MSB3202` 构建失败）：
 
 ```
 Core                     → （空，FORBIDDEN-02 的机器化前提）
 Mapping.Anthropic / .OpenAI → Core
 Providers                → Core
 Storage                  → Core
-Security                 → Core, Storage
+Security                 → Core, Storage        ← 刻意不含 Providers，见下
 Gateway                  → Core, Storage, Providers
 Hosting                  → Core, Gateway, Mapping.*, Providers, Storage, Security
-App (WinExe)             → Core, Hosting
+App (WinExe)             → Core, Hosting        ← DisableTransitiveProjectReferences=true
 ArchitectureTests        → 以上全部
 ```
+
+**`dependencies.dot:99` 的 `CredInjector → Providers` 编译期边刻意没有落成引用。** 补上它就是 `Security → Providers`，Security 在类型上就能调用 `UpstreamClients` 发请求——正是 FORBIDDEN-09 要防的"第二条外发路径"。注入器到底怎么接进出站请求（Core 端口 vs Hosting 装配的管道处理器），**设计仍在复核**：两种接法对 FORBIDDEN-09 检测规则（`§7` 的"Security 不依赖 System.Net"）的影响相反，**S2 写这条测试之前必须定**。
 
 ## 4. 切断点分析：三条会自然长出来的边/环，如何在设计期消掉
 

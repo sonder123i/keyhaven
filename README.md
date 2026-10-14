@@ -16,7 +16,7 @@ C#/.NET 8 WPF 桌面应用。本机 `127.0.0.1:<port>` 起一个 Kestrel 代理�
 | --- | --- |
 | 1 探索 / 2 澄清 / 3 架构 | ✅ 完成，见下 |
 | 4 实现计划（拆成带依赖顺序的故事） | ✅ 完成 —— **18 个故事在 `docs/plan/ai-gateway.implementation-plan.json`**（JSON 已校验：无悬空 `blockedBy`、无依赖环、每故事 ≤7 任务且都标 `fits-one-run`） |
-| 5 编码 | 🟡 **S1 完成**（骨架 + `.gitattributes` + `global.json` + 10 项目，`dotnet build` 0 警告 0 错误）。**下一步 = S2**（架构测试脚手架）。S1 撞出两处程序集环，实测记录与修正后的引用清单在 `findings §3.1` |
+| 5 编码 | 🟡 **S1 完成（经 review 返修）**：骨架 + `.gitattributes` + `global.json` + 10 项目。**首版声称的"0 警告 0 错误"只在本机成立**——`.gitignore` 的 `*.app` 吞掉了整个 App 项目，推上去的仓库构建失败；行尾验收也没过。返修后以 **fresh clone 构建 + 测试** 验收。S1 撞出的两处程序集环与 review 更正见 `findings §3.1`。**S2 开工前有一个未决设计**：注入器怎么接进出站请求（决定 FORBIDDEN-09 测试怎么写） |
 
 ## 读这些文件（按顺序）
 
