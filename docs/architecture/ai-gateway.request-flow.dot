@@ -1,0 +1,128 @@
+// ai-gateway.request-flow.dot
+// 单一请求生命周期 —— 代理密钥验证 → 真实 Key 内存替换 → 协议转换 → SSE 回流。
+// 状态：target-state（无代码证据）。红色 = 失败/终止分支，刻意画出来；本系统最危险的两种失败是
+//        (a) 真实 Key 沿"错误透传"或"运行日志"离开进程，(b) 客户端中止没传到上游导致继续计费。
+digraph AiGatewayRequestFlow {
+    rankdir=TB;
+    nodesep=0.3;
+    ranksep=0.55;
+    fontname="Sans-Serif";
+    labelloc=t;
+    fontsize=13;
+    label="一次 /v1/messages 请求的生命周期\n客户端只持【代理密钥】；验证只决定「能不能进」，路由只来自【全局激活档】(D7)\n【真实 API Key】的明文只在内存里存在，且只在最后一条出边上";
+    splines=true;
+
+    node [fontname="Sans-Serif", fontsize=10, shape=box, style="rounded,filled", fillcolor="#f5f7fa", color="#4a5b6c"];
+    edge [fontname="Sans-Serif", fontsize=9];
+
+    // ---------- 入站（客户端侧，携带代理密钥） ----------
+    client [label="Claude Code / 客户端\n配置：ANTHROPIC_BASE_URL=http://127.0.0.1:8000\nAPI Key 字段填【代理密钥】(如 sk-proxy-xxxx)",
+            shape=hexagon, fillcolor="#cfd8e3"];
+    ingress [label="Kestrel —— 按 D9 只绑 127.0.0.1（地址写死，无 LAN 开关）\n端口默认 8000 且可在 UI 改\nhttpEndpoints：只认入站协议形态\n· 读取 Authorization / x-api-key\n· 尚未解密任何真实 Key",
+             fillcolor="#dfeaf7"];
+
+    // ---------- 代理密钥验证 ----------
+    verify [label="proxyKeyAuthenticator\n查库取该代理密钥的哈希 + enabled 位\n比对：SHA-256 + FixedTimeEquals\n【完全无状态】无缓存、无失败计数、无退避(D10)\n（不做：限流 / 配额 / 多用户 / 注册）",
+            fillcolor="#ffe9b8"];
+    vOk    [label="通过\n产出 RequestContext（已认证）\n按 D7：只含【代理密钥指纹】—— 不含任何路由信息", fillcolor="#d8f0e6"];
+    v401   [label="拒绝 → 401\n错误体必须按【入站协议】的 envelope 生成\nAnthropic 与 OpenAI 的错误 JSON 形状不同",
+            fillcolor="#f7dada", color="#b91c1c"];
+
+    // ---------- 路由与激活档 ----------
+    resolve [label="routeResolver\n按 D7：路由只来自 ActivationState 的全局快照\n(入站协议, 请求体 model) → (Provider, 真实 model)\n不读密钥的任何属性；吊销只收访问权、不改路由",
+             fillcolor="#dfeaf7"];
+    rFail   [label="路由失败 → 404 / 400\n全局激活档指向的模型未启用 / Provider 缺失 / 无真实 Key",
+             fillcolor="#f7dada", color="#b91c1c"];
+
+    // ---------- 协议转换（入站 → 规范） ----------
+    inDecode [label="入站解码\nAnthropicCodec: /v1/messages → CanonicalRequest\n(OpenAI 入站则由 OpenAiCodec 负责)\nthinking 按 D4 显式降级，不流进规范模型",
+              fillcolor="#ece4f7"];
+
+    // ---------- 真实 Key 就位（替换点） ----------
+    keyLoad [label="credentialInjector（真实 Key 唯一现身点）\nrepositories 取 DPAPI 密文 → secretProtector.DPAPI 解密\n→ 只写进本次请求的 HttpRequestMessage Headers",
+             fillcolor="#f7dada"];
+    dpapi   [label="Windows DPAPI\nCryptUnprotectData\nCurrentUser + 该 Provider 的 entropy",
+             shape=circle, fillcolor="#b8860b", fontcolor="#ffffff", style=filled];
+    db      [label="gateway.db\nProvider 元数据(明文) + 真实 Key(DPAPI 密文) + 代理密钥(哈希)",
+             shape=cylinder, fillcolor="#4d6fa8", fontcolor="#ffffff", style=filled];
+
+    // ---------- 出站 ----------
+    outEncode [label="出站编码\nOpenAiCodec: CanonicalRequest → /v1/chat/completions\n(目标原生即 Anthropic 时近乎直传)",
+               fillcolor="#ece4f7"];
+    upstream  [label="远端 Provider\napi.openai.com / api.deepseek.com / api.anthropic.com",
+               shape=hexagon, fillcolor="#999999", fontcolor="#ffffff", style=filled];
+    upstreamErr [label="上游错误 429 / 5xx\n按 D4：不重试、不降级\n→ 错误码与原因原样透传回入站连接（真实 Key 绝不进错误体）",
+                 fillcolor="#f7dada", color="#b91c1c"];
+
+    // ---------- 流式回流 ----------
+    sseIn   [label="上游 SSE 原始帧\n逐行读 data: …\n· OpenAI 需带 stream_options.include_usage\n· 否则无法合法合成 usage",
+             fillcolor="#ece4f7"];
+    relay   [label="StreamRelay（纯变换）\n原始帧 → CanonicalDelta → 入站事件\n不持有 HttpContext；tool_calls 分片在此累积成块",
+             fillcolor="#ffe9b8"];
+    inEncode [label="入站事件编码（AnthropicCodec）\nmessage_start → content_block_start → content_block_delta\n→ content_block_stop → message_delta(usage+stop_reason) → message_stop",
+              fillcolor="#ece4f7"];
+    flush   [label="写回 + Flush（唯一知道 HttpContext 的地方）\n逐事件立即 flush，否则 Claude Code 看不到增量\n失败/终止也要落成合法终止序列",
+             fillcolor="#dfeaf7"];
+
+    // ---------- 终止分支 ----------
+    abort   [label="客户端中止\nRequestAborted 触发 → 必须取消上游调用\n（否则连接泄漏 + 远端继续计费）",
+             fillcolor="#f7dada", color="#b91c1c"];
+
+    // ---------- 日志与安全边界 ----------
+    runLog  [label="基础运行日志（一行/请求）\n时间 · 代理密钥前8位指纹 · 入站协议 · Provider+model\n· 状态 · 首字延迟 · 中止原因\n【不含】请求体 / 响应内容 / 任何密钥明文",
+             fillcolor="#d8f0e6"];
+
+    guard [label="安全不变式（需架构测试 + 代码审查双重把关）\n① 真实 Key 只出现在 credentialInjector → upstream 这一条边上\n② 代理密钥明文不进 runLog / 不进异常消息 / 不进配置文件\n③ 上游错误体透传前先断言不含 Authorization / api_key\n④ runLog 里只能出现指纹，永不是完整密钥\n⑤ D10：鉴权器无缓存，每请求现查哈希 —— 缓存会让「吊销即刻失效」变成一句假话\n⑥ D8：哈希不可回显，所以「生成」是复制明文的唯一时刻，UI 必须把它做成不可跳过的单步",
+           shape=note, fillcolor="#fff4cc", style="rounded,filled"];
+
+    threat [label="代理密钥在本设计里的真实定位（D7+D8+D9 合起来的结论）\n它是【可撤销性 + 误操作防护】层：能收走某个客户端的访问权、\n能让真实 Key 永远不出现在客户端配置文件里\n它【不是】网络攻击面防线 —— 监听已写死 127.0.0.1，\n所以将来若有人加 LAN 开关，必须重新评估⑤与爆破风险，不能沿用本图的结论",
+             shape=note, style="rounded,filled,dashed", fillcolor="#e6edf7"];
+
+    // ---------- 主路径 ----------
+    client    -> ingress   [label="HTTPS 卸载后本机明文\n:8000 回环", color="#1f6f5c", penwidth=2];
+    ingress   -> verify    [label="取代理密钥", color="#1f6f5c", penwidth=2];
+    verify    -> vOk       [label="匹配", color="#1f6f5c", penwidth=2];
+    vOk       -> resolve   [label="仅传已认证身份（D7：不携带路由）", color="#1f6f5c", penwidth=2];
+    resolve   -> inDecode  [label="路由成功", color="#1f6f5c", penwidth=2];
+    inDecode  -> keyLoad   [label="需要真实 Key", color="#1f6f5c", penwidth=2];
+    keyLoad   -> outEncode [label="规范请求 + 真实鉴权头", color="#1f6f5c", penwidth=2];
+    outEncode -> upstream  [label="转发（真实 Key 在此现身）", color="#b91c1c", penwidth=3];
+    upstream  -> sseIn     [label="流式 SSE", color="#1f6f5c", penwidth=2];
+    sseIn     -> relay     [label="原始帧", color="#1f6f5c", penwidth=2];
+    relay     -> inEncode  [label="CanonicalDelta", color="#1f6f5c", penwidth=2];
+    inEncode  -> flush     [label="入站事件", color="#1f6f5c", penwidth=2];
+    flush     -> client    [label="SSE 增量回流（逐事件）", color="#1f6f5c", penwidth=2, constraint=false];
+
+    // ---------- 数据访问 ----------
+    db  -> keyLoad  [label="读密文", style=dashed];
+    dpapi -> keyLoad [label="解密", style=dashed, color="#a33b3b"];
+
+    // ---------- 失败分支（不是 happy path 的一部分，但必须存在） ----------
+    verify  -> v401   [label="密钥未知 / 已禁用 / 哈希不匹配", color="#b91c1c", style=dashed];
+    resolve -> rFail  [label="无匹配 profile", color="#b91c1c", style=dashed];
+    upstream -> upstreamErr [label="429 / 5xx", color="#b91c1c", style=dashed];
+    flush   -> abort  [label="Ctrl+C / ESC / 断连", color="#b91c1c", style=dashed];
+    abort   -> upstream [label="CancellationToken 必须传到\n（这是唯一一条反向控制边）", color="#b91c1c", style=dashed];
+
+    // ---------- 日志与不变式（横向关系，不参与布局分层） ----------
+    flush     -> runLog [label="收尾时写一行", style=dotted, color="#1f6f5c", constraint=false];
+    v401      -> runLog [label="401 也要留痕", style=dotted, color="#1f6f5c", constraint=false];
+    upstreamErr -> runLog [label="上游状态码", style=dotted, color="#1f6f5c", constraint=false];
+    keyLoad   -> guard  [label="真实 Key 暴露面", style=dotted, color="#e08a00", constraint=false];
+    runLog    -> guard  [label="脱敏要求", style=dotted, color="#e08a00", constraint=false];
+    v401      -> guard  [label="错误体形状", style=dotted, color="#e08a00", constraint=false];
+    guard     -> threat [label="定位由此推出", style=dotted, color="#3a6ea5", constraint=false];
+
+    // ---------- 信任边界（必须显式命名） ----------
+    subgraph cluster_client_side {
+        label="客户端可达区 —— 这里流动的是【代理密钥】，可以撤销、可以轮换，泄露代价有限";
+        style=rounded; color="#3a6ea5"; fontsize=11;
+        client; ingress; verify; vOk; v401;
+    }
+
+    subgraph cluster_privileged {
+        label="特权区 —— 只有这里存在【真实 API Key】明文；进程外任何一步都是泄露";
+        style=rounded; color="#b91c1c"; fontsize=11;
+        keyLoad; dpapi;
+    }
+}

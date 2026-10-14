@@ -1,0 +1,27 @@
+rule_id,severity,from,to,edge_type,reason,detection,confidence,note
+FORBIDDEN-01,HIGH,AiGateway.Mapping.Anthropic,AiGateway.Mapping.OpenAI,compile-time,任一方向互引都会把 2+2 的适配器数量变成 N×M 专用转换器,ArchUnitNET 断言 + 项目引用审查,high,target-state 规则（尚无代码）
+FORBIDDEN-01b,HIGH,AiGateway.Mapping.OpenAI,AiGateway.Mapping.Anthropic,compile-time,与 FORBIDDEN-01 对称,同上,high,target-state
+FORBIDDEN-02,HIGH,AiGateway.Core,AiGateway.Gateway|Mapping|Providers|Storage|Security|App,compile-time,内核反向依赖会失去可测性并把 IO 拖进规范模型,Core 项目零 ProjectReference + CI 断言,high,target-state
+FORBIDDEN-03,MEDIUM,AiGateway.App.ViewModels,AiGateway.Storage,compile-time,UI 直连仓储将诱发 App↔Gateway/Storage 的程序集环（.NET 编译期硬性 CS0146）,ArchUnitNET,high,target-state
+FORBIDDEN-03b,MEDIUM,AiGateway.App.ViewModels,AiGateway.Security,compile-time,同上；明文 Key 一旦进入 ViewModel 字段就难以保证不外泄到日志,ArchUnitNET + 禁止 ViewModel 持有 string key,medium,target-state
+FORBIDDEN-04,MEDIUM,AiGateway.Gateway.StreamRelay,AiGateway.App.ViewModels,compile-time,管道回调 UI 会形成 runtime 环；UI 通知必须走事件/Flow 单向出站,ArchUnitNET,high,target-state
+FORBIDDEN-05,MEDIUM,AiGateway.Gateway.HttpEndpoints,gateway.db,direct-sql,端点绕过仓储直连库会让加密/迁移逻辑出现两处真相,代码审查 + 禁止 Gateway 引用 Microsoft.Data.Sqlite,medium,target-state
+FORBIDDEN-06,HIGH,AiGateway.Gateway.RunLog,AiGateway.Security,data-leak,日志侧一旦能取到真实 Key，"一行日志"就成了密钥外泄通道；运行日志只允许记代理密钥前缀指纹,日志写入签名只接受指纹类型 + 架构测试禁止 RunLog 依赖 Security,high,target-state 新增
+FORBIDDEN-07,HIGH,AiGateway.Gateway.ProxyKeyAuthenticator,AiGateway.Security.SecretProtector,privilege-creep,鉴权器若能解密真实 Key，则 401 失败路径与解密路径合并进同一组件，越权面变大,鉴权与注入拆两组件 + 架构测试禁止 ProxyKeyAuth 依赖 Security,high,target-state 新增
+FORBIDDEN-08,MEDIUM,AiGateway.App.ViewModels,gateway.db,direct-sql,UI 直连库读密文会绕开 secretProtector 这一处解密审计口,UI 只经 repositories 端口,medium,target-state 新增
+FORBIDDEN-09,HIGH,AiGateway.Security.CredentialInjector,远端 API,runtime-call,注入器自己发请求会让真实 Key 出现第二条外发路径；它只该写头，由 Providers 统一出口,禁止 Security 程序集引用 HttpClient,high,target-state 新增
+RISK-01,HIGH,gateway.db,Windows DPAPI,data-protection,DPAPI 密文仅同机同用户可解；换机/换账户/重置密码导致已存 Key 全部不可读,schema 需 protector_id + key_version 列,high,单向门——必须在写第一行数据前决定
+RISK-02,HIGH,AiGateway.Gateway.ProxyKeyAuthenticator,LAN interface,binding-scope,代理密钥把"同网段白嫖"从必然降为需先拿到密钥，但仍三件事未闭环：① 监听 127.0.0.1 还是 0.0.0.0 ② 鉴权失败是否退避/锁定（防在线爆破）③ 哈希算法与是否加盐,默认 127.0.0.1；LAN 需显式开关；②③ 属待澄清决策,high,已因代理密钥机制改写——不再是"无鉴权区"
+RISK-03,HIGH,AiGateway.Gateway.StreamRelay,upstream SSE,semantic-gap,OpenAI 流默认不返回 usage；不发 stream_options.include_usage 则 Anthropic message_delta 的 usage 只能瞎猜,契约测试断言最后 chunk 携带 usage,high,易漏项
+RISK-04,MEDIUM,AiGateway.Gateway.HttpEndpoints,/v1/messages/count_tokens,endpoint-coverage,Claude Code 会调用该端点；未实现会导致客户端在长上下文时直接报错,返回估算值即可但必须存在,medium,待实测确认
+RISK-05,MEDIUM,AiGateway.Mapping.* (stateless),per-request buffer,lifetime,codec 若持有实例字段做累积，多会话并发会互相串流；DI 必须注册为 Singleton 无状态实现 + 每请求上下文对象,架构测试禁止 codec 类的可变实例字段,medium,target-state
+RISK-06,MEDIUM,AiGateway.Gateway,HttpProtocol.RequestAborted,cancellation,客户端中止未传播到上游 HttpClient 会造成连接泄漏与远端继续计费,集成测试用 CancellationTokenSource 取消并断言上游被取消,high,target-state
+RISK-07,MEDIUM,AiGateway.App,WPF Dispatcher,threading,请求线程回调 Dispatcher 会与 Kestrel 形成死锁,禁止请求路径调用 Dispatcher.Invoke/InvokeAsync,medium,target-state
+UNKNOWN-01,LOW,AiGateway.Storage,Dapper vs EF Core,tech-choice,尚无代码证据；SQLite+DPAPI 单库下 Dapper 更轻但迁移需自管,阶段 4 前用一次 spike 决出,low,开放决策
+UNKNOWN-02,MEDIUM,inbound OpenAI protocol clients,,scope,双向矩阵已确认(D1)，但"首期是否真有非 Claude Code 的入站客户端"仍无使用证据——它是被选型带进来的,需求确认,medium,待澄清
+UNKNOWN-03,MEDIUM,thinking 透传 / 故障转移 / 请求日志,,scope,请求日志已按补充需求以"基础运行日志"形态回归 MVP；thinking 与故障转移仍按 D4 出局但 Claude Code 会发 thinking 字段,需求确认,medium,范围已部分收窄
+UNKNOWN-04,CLOSED-D7,ProxyKey ⇄ RouteProfile 绑定语义,,data-model,【已决】路由全部来自全局激活档，密钥不含路由信息；代价=所有入站客户端共享同一当前模型，不能同时用不同模型,已写入 DSL/DOT；routeResolver 不得依赖 Storage,high,已决 2026-10-14
+UNKNOWN-05,CLOSED-D8,代理密钥可否事后回显,,data-model,【已决】只存裸 SHA-256（无盐、非慢哈希）不可回显；代价=忘了只能重新生成并重填所有客户端,enabled 位与 algo_version 列仍需存在,high,已决 2026-10-14
+UNKNOWN-06,CLOSED-D9+D10,鉴权失败是否做退避/锁定,,reliability,【已决】只做 FixedTimeEquals；地址写死 127.0.0.1 只有端口可改；不做计数/退避/锁定,ProxyKeyAuth 必须零可变状态（可用架构测试断言）,high,已决 2026-10-14
+RISK-02,LOW,AiGateway.Gateway.ProxyKeyAuthenticator,LAN interface,binding-scope,D9 已把 LAN 面关死，在线猜解面不存在；残余仅两点：401 错误体形状须按入站协议、以及将来若有人加 LAN 开关须重评,监听地址为代码常量 + 401 形状契约测试,low,已从 HIGH 降级（D9/D10）
+DECIDED-01,HIGH,AiGateway.Gateway.ProxyKeyAuthenticator,hash cache,correctness,吊销即刻生效完全依赖"每请求现查哈希、不加缓存"；加一层内存缓存会静默破坏该语义且不触发任何测试失败,集成测试：吊销后下一个请求必须 401,high,D7–D10 派生的新增强约束

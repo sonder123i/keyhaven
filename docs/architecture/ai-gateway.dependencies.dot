@@ -1,0 +1,150 @@
+// ai-gateway.dependencies.dot
+// 分析粒度：.NET 项目/程序集（compile-time reference）+ 标注 runtime-call / data-access / config-wiring。
+// 状态：greenfield 目标架构，全部节点 state=target（无代码证据）。置信度见 ai-gateway.evidence.md。
+// 两条不许打折的脊柱：
+//   ① 入站协议 → 规范模型 → 出站协议；两个 codec 之间永不允许编译期互引（FORBIDDEN-01）。
+//   ② 代理密钥验证(ProxyKeyAuth) 与 真实 Key 注入(CredInjector) 分成两节点；真实 Key 明文只在
+//      CredInjector→Providers→远端 这一条路径上存在（FORBIDDEN-06/07/09）。
+// 布局：rankdir=TB（Canvas 优先，避免长横条）。红色虚线 = 被禁止的边（forbidden-edge），不是现状。
+digraph AiGatewayDeps {
+    rankdir=TB;
+    nodesep=0.35;
+    ranksep=0.7;
+    fontname="Sans-Serif";
+    labelloc=t;
+    label="AI 本地代理网关 —— 程序集依赖与影响半径（target-state）\n脊柱①：入站协议 → 规范模型 → 出站协议（codec 永不互引）\n脊柱②：代理密钥验证 → 内存替换真实 Key（明文只有一个现身点）";
+    compound=true;
+
+    node [fontname="Sans-Serif", fontsize=11, shape=box, style="rounded,filled", fillcolor="#f5f7fa", color="#4a5b6c"];
+    edge [fontname="Sans-Serif", fontsize=9];
+
+    // ---------- L0 稳定内核（唯一允许被所有人依赖的节点） ----------
+    subgraph cluster_core {
+        label="L0 Core（无 IO、无协议知识、无 UI）";
+        style=rounded; color="#1f6f5c";
+        Core [label="AiGateway.Core\n规范模型 Message/Block/Delta/Usage/StopReason\n端口接口 + ToolCallSession + IActivationState", fillcolor="#d8f0e6"];
+    }
+
+    // ---------- L1 协议编解码（互不可见） ----------
+    subgraph cluster_mapping {
+        label="L1 Mapping（每个 codec 只认识自己那套 wire 格式）";
+        style=rounded; color="#7b5ea7";
+        AnthropicCodec [label="AiGateway.Mapping.Anthropic\n/v1/messages 解析 · messages SSE 事件生成\ninput_json_delta 渲染｜thinking: 出局(D4)，入站需识别并降级", fillcolor="#ece4f7"];
+        OpenAiCodec    [label="AiGateway.Mapping.OpenAI\nchat/completions 解析 · chunk 生成\ntool_calls 分片（index/name/arguments）解码", fillcolor="#ece4f7"];
+    }
+
+    // ---------- L2 网关管道 ----------
+    subgraph cluster_gateway {
+        label="L2 Gateway（Kestrel 内的请求管道，仅依赖 Core 端口）";
+        style=rounded; color="#3a6ea5";
+        HttpEndpoints [label="AiGateway.Gateway :: HttpEndpoints\n/v1/messages · /v1/chat/completions\n/v1/messages/count_tokens · /health\n唯一持 HttpContext 者：Write + Flush 都在这", fillcolor="#dfeaf7"];
+        ProxyKeyAuth  [label="AiGateway.Gateway :: ProxyKeyAuthenticator\nSHA-256 + FixedTimeEquals + enabled 位\n按 D10 完全无状态：无缓存/无计数/无退避\n按 D7 不产出任何路由信息｜401 按入站协议形状", fillcolor="#ffe9b8"];
+        RouteResolver [label="AiGateway.Gateway :: RouteResolver\n按 D7：路由唯一来源 = 全局激活快照\nBaseUrl 随快照带来，不查库｜不碰密钥", fillcolor="#dfeaf7"];
+        StreamRelay   [label="AiGateway.Gateway :: StreamRelay\n上游帧 → 规范 Delta → 入站事件（纯变换）\nCancellationToken 传播 / 半截流终止", fillcolor="#ffe9b8"];
+        RunLog        [label="AiGateway.Gateway :: RunLog\n一行/请求 + 只记指纹｜不做统计/图表/成本", fillcolor="#d8f0e6"];
+    }
+
+    // ---------- L3 出站与持久化 ----------
+    subgraph cluster_edge_systems {
+        label="L3 Providers / Storage / Security";
+        style=rounded; color="#2f7d6b";
+        Providers    [label="AiGateway.Providers\nUpstreamClients：BaseUrl + 鉴权头形态 + SSE 读取\n按 D7：只依赖 Core，不查库、不解密 → 全图最易单测的一层", fillcolor="#dcefe8"];
+        Storage      [label="AiGateway.Storage\nRepositories + SQLite 建库迁移\n真实Key=DPAPI密文 ｜ 代理密钥=SHA-256哈希", fillcolor="#e6e6e6"];
+        Security     [label="AiGateway.Security\nSecretProtector（DPAPI CurrentUser + entropy）", fillcolor="#f7dada"];
+        CredInjector [label="AiGateway.Security :: CredentialInjector\n★ 真实 API Key 明文在进程内的唯一现身点\n只写进出站 HttpRequestMessage 的鉴权头", fillcolor="#f7dada"];
+        Failover     [label="AiGateway.Providers :: FailoverPolicy\n(Phase 2) Key 轮转 / 429 退避 / 降级", style="rounded,filled,dashed", fillcolor="#eeeeee"];
+    }
+
+    // ---------- L4 UI ----------
+    subgraph cluster_ui {
+        label="L4 WPF UI（STA 线程）";
+        style=rounded; color="#6b8cba";
+        ViewModels [label="AiGateway.App :: ViewModels\nKey 管理 / 一键切换 / 连通性测试", fillcolor="#e6edf7"];
+        Views      [label="AiGateway.App :: Views (XAML)", fillcolor="#e6edf7"];
+    }
+
+    // ---------- L5 组合根（唯一被允许"不纯洁"的节点） ----------
+    subgraph cluster_hosting {
+        label="L5 Hosting 组合根（唯一允许知道所有具体实现的地方）";
+        style=rounded; color="#556b7b";
+        Hosting [label="AiGateway.Hosting\nDI 注册 / Kestrel 启停 / 单实例 Mutex / 优雅关闭\n把具体 codec 按 profile 绑到 Core 端口上", fillcolor="#dfe6ec"];
+    }
+
+    // ---------- 外部与数据 ----------
+    Db          [label="gateway.db\nSQLite 文件（Key 列为 DPAPI 密文）", shape=cylinder, style=filled, fillcolor="#4d6fa8", fontcolor="#ffffff"];
+    Dpapi       [label="Windows DPAPI\nCryptProtectData", shape=circle, style=filled, fillcolor="#b8860b", fontcolor="#ffffff"];
+    OpenAiApi   [label="OpenAI 兼容远端 API\nopenai / deepseek …", shape=hexagon, style=filled, fillcolor="#999999", fontcolor="#ffffff"];
+    AnthropicApi[label="Anthropic API", shape=hexagon, style=filled, fillcolor="#999999", fontcolor="#ffffff"];
+    ClaudeCode  [label="Claude Code CLI\n入站：Anthropic 协议", shape=hexagon, style="filled,dashed", fillcolor="#cfd8e3"];
+    OpenAiClient[label="OpenAI 协议客户端\ninferred：首期是否服务待确认", style="filled,dashed", fillcolor="#cfd8e3"];
+
+    Tests       [label="AiGateway.Mapping.Tests\ngolden fixture 回放（录制的真实 SSE 帧）", shape=box, style="rounded,filled,dashed", fillcolor="#fff4cc"];
+
+    // ---------- 编译期依赖（intended） ----------
+    AnthropicCodec -> Core [label="compile-time", color="#1f6f5c"];
+    OpenAiCodec    -> Core [label="compile-time", color="#1f6f5c"];
+    HttpEndpoints  -> Core [label="compile-time"];
+    HttpEndpoints  -> ProxyKeyAuth [label="compile-time 管道内先鉴权"];
+    HttpEndpoints  -> RouteResolver [label="compile-time"];
+    HttpEndpoints  -> StreamRelay [label="compile-time"];
+    HttpEndpoints  -> RunLog [label="compile-time"];
+    ProxyKeyAuth   -> Core [label="compile-time 只认哈希与端口", color="#1f6f5c", penwidth=2];
+    ProxyKeyAuth   -> Storage [label="compile-time 每请求取哈希+enabled（无缓存 D10）"];
+    RouteResolver  -> Core [label="compile-time", color="#1f6f5c"];
+    StreamRelay    -> Core [label="compile-time 仅端口接口", color="#1f6f5c", penwidth=2];
+    StreamRelay    -> Providers [label="compile-time"];
+    Providers      -> Core [label="compile-time", color="#1f6f5c"];
+    CredInjector   -> Storage [label="compile-time 取 DPAPI 密文"];
+    CredInjector   -> Security [label="compile-time 现场解密"];
+    CredInjector   -> Providers [label="compile-time ★真实 Key 唯一注入点", color="#b91c1c", penwidth=2];
+    RunLog         -> Core [label="compile-time", color="#1f6f5c"];
+    RunLog         -> Storage [label="compile-time 写日志行"];
+    Storage        -> Core [label="compile-time", color="#1f6f5c"];
+    Storage        -> Security [label="compile-time"];
+    Security       -> Core [label="compile-time", color="#1f6f5c"];
+    ViewModels     -> Core [label="compile-time 只依赖端口", color="#1f6f5c"];
+    Views          -> ViewModels [label="compile-time (XAML Binding)"];
+    Failover       -> Providers [label="compile-time (Phase 2)", style=dashed];
+
+    // 组合根：唯一允许指向具体实现的入边集合
+    Hosting -> Core [label="config-wiring"];
+    Hosting -> HttpEndpoints [label="config-wiring"];
+    Hosting -> AnthropicCodec [label="config-wiring 绑定具体 codec", style=dashed];
+    Hosting -> OpenAiCodec [label="config-wiring 绑定具体 codec", style=dashed];
+    Hosting -> Providers [label="config-wiring"];
+    Hosting -> Storage [label="config-wiring"];
+    Hosting -> Security [label="config-wiring"];
+    Hosting -> CredInjector [label="config-wiring"];
+    Hosting -> ViewModels [label="config-wiring"];
+
+    // ---------- 运行时 / 数据访问（不是编译期依赖，分开标注） ----------
+    ClaudeCode -> HttpEndpoints [label="runtime-call HTTP+SSE :8000\n头带【代理密钥】", style=dashed, color="#c0392b"];
+    OpenAiClient -> HttpEndpoints [label="runtime-call HTTP\n头带【代理密钥】", style=dashed, color="#c0392b"];
+    Providers -> OpenAiApi [label="runtime-call HTTPS（此处才有真实 Key）", style=dashed, color="#b91c1c"];
+    Providers -> AnthropicApi [label="runtime-call HTTPS（此处才有真实 Key）", style=dashed, color="#b91c1c"];
+    Storage -> Db [label="data-access Microsoft.Data.Sqlite", style=dashed];
+    Security -> Dpapi [label="runtime-call P/Invoke", style=dashed, color="#a33b3b"];
+    Tests -> AnthropicCodec [label="test-only", style=dotted];
+    Tests -> OpenAiCodec [label="test-only", style=dotted];
+    Tests -> StreamRelay [label="test-only", style=dotted];
+    Tests -> ProxyKeyAuth [label="test-only 401 与定时安全比较", style=dotted];
+
+    // ---------- 禁止边（治理规则，画出来是为了被机器检查） ----------
+    // constraint=false：这些边是禁令而不是依赖，不能参与分层；否则反向边会让 dot 的 init_rank 成环失败。
+    AnthropicCodec -> OpenAiCodec [label="FORBIDDEN-01 codec 互引\n→ 会把 2+2 变成 4 个专用转换器", color="#b91c1c", style=dashed, penwidth=2, constraint=false];
+    OpenAiCodec -> AnthropicCodec [label="FORBIDDEN-01 反向", color="#b91c1c", style=dashed, penwidth=2, constraint=false];
+    Core -> StreamRelay [label="FORBIDDEN-02 Core 反向依赖\n（Core 不得有 IO / 协议 / UI 知识）", color="#b91c1c", style=dashed, constraint=false];
+    ViewModels -> Storage [label="FORBIDDEN-03 UI 直连基础设施\n（绕开 IActivationState 会造成 UI↔Gateway 环）", color="#b91c1c", style=dashed, constraint=false];
+    StreamRelay -> ViewModels [label="FORBIDDEN-04 管道回调 UI", color="#b91c1c", style=dashed, constraint=false];
+    HttpEndpoints -> Db [label="FORBIDDEN-05 端点绕过仓储直连库", color="#b91c1c", style=dashed, constraint=false];
+    RunLog -> Security [label="FORBIDDEN-06 日志侧接触真实 Key\n运行日志只能记代理密钥指纹", color="#b91c1c", style=dashed, penwidth=2, constraint=false];
+    ProxyKeyAuth -> Security [label="FORBIDDEN-07 鉴权器解真实 Key\n鉴权与注入必须两个组件，失败路径才不可能带出密钥", color="#b91c1c", style=dashed, penwidth=2, constraint=false];
+    ViewModels -> Db [label="FORBIDDEN-08 UI 直连库读密文", color="#b91c1c", style=dashed, constraint=false];
+    CredInjector -> OpenAiApi [label="FORBIDDEN-09 注入器直连远端\n真实 Key 必须经 Providers 的请求构造出口", color="#b91c1c", style=dashed, constraint=false];
+
+    // ---------- 影响半径提示 ----------
+    Core -> Tests [label="impact: Core 是最高 fan-in(≈12)\n改一处=全解决方案重编+全量回归", color="#e08a00", style=dotted, constraint=false];
+    StreamRelay -> Tests [label="impact: StreamRelay 仍是故障聚集点\n（中止传播/半截流/tool 分片；Flush 已移到 HttpEndpoints）", color="#e08a00", style=dotted, constraint=false];
+    CredInjector -> guard [label="安全不变式：真实 Key 的暴露面被压到这一个节点", color="#b91c1c", style=dotted, constraint=false];
+    guard [label="★ 不变式：除 CredInjector→Providers→远端 这一条路径外\n任何边都不该出现真实 Key 明文\n（日志、异常消息、错误透传、UI 回显、崩溃转储）", shape=note, style="rounded,filled,dashed", fillcolor="#fff4cc"];
+}
