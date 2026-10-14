@@ -30,7 +30,7 @@
         "ArchitectureTests（xUnit + ArchUnitNET）引用全部程序集",
         "一条测试对应一条 FORBIDDEN（含 01b / 03b 两条对称项）",
         "Core 零 ProjectReference 断言（把 I=0.00 机器化）",
-        "Security 不得引用 HttpClient/System.Net；Gateway 不得引用 Microsoft.Data.Sqlite",
+        "FORBIDDEN-09 按定稿 H 写：Security 允许 DelegatingHandler 与请求头，禁止 HttpClient / IHttpClientFactory / SocketsHttpHandler / HttpClientHandler、禁止构造 HttpRequestMessage，且 Security 与 Providers 互不引用；Gateway 不得引用 Microsoft.Data.Sqlite",
         "codec 与鉴权器无可变实例字段断言（RISK-05 / D10）",
         "请求路径禁 Dispatcher.Invoke/InvokeAsync 断言（RISK-07）",
         "『DPAPI 解密调用点计数 == 1』先写成 skipped 测试，S11 落地后启用"
@@ -86,7 +86,7 @@
         "secret 表含 protector_id + key_version 列",
         "proxy_key 表含 sha256 哈希 + algo_version + enabled 列",
         "SecretProtector：DPAPI CurrentUser + 每 Provider 独立 entropy（域分离）",
-        "CredentialInjector 骨架：只写 HttpRequestMessage 鉴权头，不发请求",
+        "CredentialInjectingHandler : DelegatingHandler 骨架（定稿 H）：按请求选项里的 provider id 取密文、解密、写鉴权头；不构造、不发起请求。选项键名是 Core 里的字符串常量，Core 不碰 System.Net",
         "测试：密文往返 + 用错 entropy 必须解不开"
       ],
       "executionFit": "fits-one-run",
@@ -192,7 +192,8 @@
       "tasks": [
         "UpstreamClients：BaseUrl + 鉴权头形态差异（Authorization: Bearer vs x-api-key + anthropic-version）",
         "上游 HTTPS 响应流 → 原始帧 IAsyncEnumerable",
-        "CredInjector 只写进出站请求的鉴权头，绝不自己发请求",
+        "Hosting 用 AddHttpMessageHandler 把 CredentialInjectingHandler 挂进 Providers 的 HttpClient 管道；Providers 只在请求选项里设 provider id，代码不经手明文、也不知道注入器存在（定稿 H）",
+        "实测：IHttpClientFactory 自带的请求日志处理器排在注入器内侧，确认它记录的 Authorization 值被打码；没打码就显式配置打码并加测试（默认行为未核实，不能假设）",
         "启用 S2 里『DPAPI 解密调用点计数 == 1』那条验收",
         "本地 stub HttpMessageHandler 测试，全程不碰网络",
         "OPEN-07：第一个真实 Provider（DeepSeek or OpenAI）需要他给 Key"

@@ -31,10 +31,10 @@
 | `AiGateway.Mapping.Anthropic` | 1（仅 Hosting） | 1 | 0.50 | 被 Hosting 绑定后才可达，正确 |
 | `AiGateway.Mapping.OpenAI` | 1 | 1 | 0.50 | 同上 |
 | `AiGateway.Gateway :: ProxyKeyAuth` | 1 | 2 | 0.67 | 只被 `HttpEndpoints` 调用；**对 Security 零依赖**（这是 `FORBIDDEN-07` 要保的东西） |
-| `AiGateway.Security :: CredInjector` | 1（仅 Hosting） | 3 | **0.75** | 全图唯一"高不稳但零同层依赖"的节点 —— 它只许被装配、不许被别处调用 |
+| `AiGateway.Security :: CredInjector` | 1（仅 Hosting） | **2** | **0.67** | 全图唯一"只许被装配、不许被调用"的节点。2026-10-15 定稿 H 后它是 Providers HttpClient 管道里的 `DelegatingHandler`，对 Providers 的边从编译期改为运行时（Ce 3 → 2），**两个程序集互不引用** |
 | `AiGateway.Gateway :: StreamRelay` | 1 | 2 | 0.67 | 稳定度尚可，但**故障聚集点**（见 §5） |
 | `AiGateway.Gateway :: RunLog` | 1 | 2 | 0.67 | 依赖 Core + Storage，**不依赖 Security**（`FORBIDDEN-06`） |
-| `AiGateway.Providers` | 4 | **1** | **0.20** | Ce 3 → 2 → **1**：先是不再解密 Key（D6），再是不查库（D7）。**只剩 Core 一个依赖 = 全图最易单测的一层** |
+| `AiGateway.Providers` | **3** | **1** | **0.25** | Ce 3 → 2 → **1**：先是不再解密 Key（D6），再是不查库（D7）。**只剩 Core 一个依赖 = 全图最易单测的一层**。Ca 4 → 3：定稿 H 后注入器不再编译期依赖它，Providers 甚至不知道注入器存在——单测连假注入器都不用配 |
 | `AiGateway.Storage` | **4** | 2 | 0.33 | 传入从 5 降到 4：`Providers` 不再依赖它（D7） |
 | `AiGateway.Security` | 3 | 1 | 0.25 | 稳定，合理（能力小、被依赖多） |
 | `AiGateway.App.ViewModels` | 2 | 1 | 0.33 | 合理 |
@@ -121,7 +121,17 @@ App (WinExe)             → Core, Hosting        ← DisableTransitiveProjectRe
 ArchitectureTests        → 以上全部
 ```
 
-**`dependencies.dot:99` 的 `CredInjector → Providers` 编译期边刻意没有落成引用。** 补上它就是 `Security → Providers`，Security 在类型上就能调用 `UpstreamClients` 发请求——正是 FORBIDDEN-09 要防的"第二条外发路径"。注入器到底怎么接进出站请求（Core 端口 vs Hosting 装配的管道处理器），**设计仍在复核**：两种接法对 FORBIDDEN-09 检测规则（`§7` 的"Security 不依赖 System.Net"）的影响相反，**S2 写这条测试之前必须定**。
+**`dependencies.dot:99` 的 `CredInjector → Providers` 不落成引用 —— 2026-10-15 定稿为 H（Hosting 装配的管道处理器）。** 三个候选：
+
+| 接法 | 问题 | 结论 |
+| --- | --- | --- |
+| 照图补 `Security → Providers` | Security 在类型上就能调 `UpstreamClients` 发请求 = FORBIDDEN-09 要防的第二条外发路径 | ✗ |
+| 注入器端口放 Core（`Apply(providerId, headerSink)`），Providers 调用 | **与 `IRealKeyVault` 同一扇 DI 后门**：端口全员可见，任何类注入它、自己传 sink 就接走明文；类型层、引用层都失守，只剩一条"谁能依赖它"的测试白名单 | ✗（曾被我推荐过，review 时自我推翻） |
+| **H：注入器是 Security 里的 `DelegatingHandler`，Hosting 把它挂进 Providers 的 HttpClient 管道** | 代价：Security 要依赖 `System.Net.Http` 的 `DelegatingHandler`，FORBIDDEN-09 检测规则须从"不依赖 System.Net"改为精确意图（见 §7） | ✓ |
+
+H 的三个收益：**无人可调用**（Gateway、App 连类型名都写不出，类型层 + 引用层都守得住）；**Providers 代码不经手明文**、也不知道注入器存在；正好是 §2 原本写的"被装配，不被调用，唯一入边来自 Hosting"。Provider 身份经请求选项传递，键名是 Core 里的一个字符串常量（Core 仍不碰 System.Net）。
+
+**S11 必须实测一件事**：`IHttpClientFactory` 自带的请求日志处理器排在注入器内侧（更靠近网络），它记录的 `Authorization` 头值是否被打码——默认行为我没核实过，不能假设。
 
 ## 4. 切断点分析：三条会自然长出来的边/环，如何在设计期消掉
 
@@ -243,7 +253,10 @@ Gateway 不依赖 App
 Providers/Storage 之外不得引用 Microsoft.Data.Sqlite          ← FORBIDDEN-05/08
 Gateway 的鉴权侧（ProxyKeyAuth）不依赖 Security                ← FORBIDDEN-07
 RunLog / 日志写入器不依赖 Security                             ← FORBIDDEN-06
-Security 不依赖 HttpClient / System.Net                        ← FORBIDDEN-09
+Security 只能改经过它的请求，不能自己发：允许 DelegatingHandler /   ← FORBIDDEN-09（定稿 H 后改写；
+  HttpRequestMessage 头部；禁止 HttpClient / IHttpClientFactory /        原"不依赖 System.Net"当天就会红）
+  SocketsHttpHandler / HttpClientHandler、禁止构造 HttpRequestMessage
+Security 与 Providers 互不引用                                         ← FORBIDDEN-09 / §3.1
 DPAPI 解密调用点计数 == 1                                      ← §4.4 一次性验收
 ```
 

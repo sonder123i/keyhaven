@@ -51,7 +51,7 @@ digraph AiGatewayDeps {
         Providers    [label="AiGateway.Providers\nUpstreamClients：BaseUrl + 鉴权头形态 + SSE 读取\n按 D7：只依赖 Core，不查库、不解密 → 全图最易单测的一层", fillcolor="#dcefe8"];
         Storage      [label="AiGateway.Storage\nRepositories + SQLite 建库迁移\n真实Key=DPAPI密文 ｜ 代理密钥=SHA-256哈希", fillcolor="#e6e6e6"];
         Security     [label="AiGateway.Security\nSecretProtector（DPAPI CurrentUser + entropy）", fillcolor="#f7dada"];
-        CredInjector [label="AiGateway.Security :: CredentialInjector\n★ 真实 API Key 明文在进程内的唯一现身点\n只写进出站 HttpRequestMessage 的鉴权头", fillcolor="#f7dada"];
+        CredInjector [label="AiGateway.Security :: CredentialInjectingHandler\n★ 真实 API Key 明文在进程内的唯一现身点\nDelegatingHandler：由 Hosting 挂进 Providers 的 HttpClient 管道\n只改经过它的请求头，不构造、不发起请求，无人可调用", fillcolor="#f7dada"];
         Failover     [label="AiGateway.Providers :: FailoverPolicy\n(Phase 2) Key 轮转 / 429 退避 / 降级", style="rounded,filled,dashed", fillcolor="#eeeeee"];
     }
 
@@ -96,7 +96,10 @@ digraph AiGatewayDeps {
     Providers      -> Core [label="compile-time", color="#1f6f5c"];
     CredInjector   -> Storage [label="compile-time 取 DPAPI 密文"];
     CredInjector   -> Security [label="compile-time 现场解密"];
-    CredInjector   -> Providers [label="compile-time ★真实 Key 唯一注入点", color="#b91c1c", penwidth=2];
+    // 【2026-10-15 定稿 H】这条原是 compile-time 边，S1 review 时发现落成引用就是 Security -> Providers，
+    // Security 在类型上就能调 UpstreamClients 发请求（FORBIDDEN-09 要防的第二条外发路径）。
+    // 改为运行时管道边：注入器是 DelegatingHandler，由 Hosting 挂进 Providers 的 HttpClient；两个程序集互不引用。
+    CredInjector   -> Providers [label="runtime 管道处理器（Hosting 装配）\n★真实 Key 唯一注入点", color="#b91c1c", penwidth=2, style=dashed];
     RunLog         -> Core [label="compile-time", color="#1f6f5c"];
     RunLog         -> Storage [label="compile-time 写日志行"];
     Storage        -> Core [label="compile-time", color="#1f6f5c"];
@@ -119,7 +122,7 @@ digraph AiGatewayDeps {
     Hosting -> Providers [label="config-wiring"];
     Hosting -> Storage [label="config-wiring"];
     Hosting -> Security [label="config-wiring"];
-    Hosting -> CredInjector [label="config-wiring"];
+    Hosting -> CredInjector [label="config-wiring 挂进 Providers 的 HttpClient 管道"];
     // 【2026-10-15 实测删除】原 Hosting -> ViewModels 这条 config-wiring 边不存在了。
     // 原因：可执行入口在 App 程序集里（App.xaml.cs 要调 Hosting.AddAiGateway() 启 Kestrel），
     // 于是 Hosting -> ViewModels(在 App 内) 与 App -> Hosting 构成程序集环，同样撞 MSB4006。

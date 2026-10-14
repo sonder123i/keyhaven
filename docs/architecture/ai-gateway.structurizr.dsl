@@ -37,7 +37,7 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关 —— 
                 httpListenerPolicy = component "监听与端口策略" "按 D9：绑定地址在代码里写死 127.0.0.1，UI 不提供局域网开关，只暴露端口改（默认 8000）。端口冲突要能在 UI 上看到并当场改，/health 免鉴权用于自检端口活着。" "Kestrel Listen(Loopback, port)" {
                     tags "Hosting,Mvp,Stripped"
                 }
-                credentialInjector = component "真实密钥注入器" "真实 API Key 明文在进程内的唯一现身点：取 DPAPI 密文 → 解密 → 仅写入本次出站 HttpRequestMessage 的鉴权头。不落日志、不进异常消息、不回给客户端。" "C# + DPAPI" {
+                credentialInjector = component "真实密钥注入器" "真实 API Key 明文在进程内的唯一现身点。形态是 HttpClient 管道里的一个 DelegatingHandler，由 compositionRoot 装配进 upstreamClients 的 HttpClient，不被任何组件调用（2026-10-15 定稿 H）：按请求选项里的 provider id 取 DPAPI 密文 → 解密 → 仅写入经过它的这次出站请求的鉴权头。不构造、不发起任何请求；不落日志、不进异常消息、不回给客户端。" "DelegatingHandler + DPAPI" {
                     tags "Security,Mvp,HighRisk"
                 }
                 routeResolver = component "路由与激活模型解析器" "按 D7：路由的【唯一来源】是 ActivationState 的全局快照，本组件不读代理密钥的任何属性、也不查库。输入 (入站协议, 请求体 model 字段) → 输出 (Provider, 真实 model, BaseUrl)。" "C#" {
@@ -107,9 +107,10 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关 —— 
 
         gateway.appExe.wpfViews -> gateway.appExe.viewModels "数据绑定 / 命令" "XAML Binding"
         gateway.appExe.viewModels -> gateway.appExe.activationState "读当前激活档、写入切换" "in-process"
-        gateway.appExe.viewModels -> gateway.appExe.repositories "增删改 Provider 与 Key" "in-process"
+        gateway.appExe.viewModels -> gateway.appExe.repositories "增删改 Provider 元数据（经 Core 仓储端口；不含 Key）" "in-process"
+        gateway.appExe.viewModels -> gateway.appExe.secretProtector "保存 / 删除真实 Key：经 Core 只写端口 IRealKeyVault，签名上不可读回（S1 review）" "in-process"
         gateway.appExe.viewModels -> gateway.appExe.upstreamClients "点击「测试连通性」" "in-process"
-        gateway.appExe.compositionRoot -> gateway.appExe.wpfViews "启动 UI 线程" "STA"
+        gateway.appExe.wpfViews -> gateway.appExe.compositionRoot "App 入口在 UI 线程上调 AddAiGateway()：装配非 UI 实现并启动 Kestrel（C2 修正：组合根不引用 UI，VM 由 App 自己注册）" "in-process"
         gateway.appExe.compositionRoot -> gateway.appExe.httpEndpoints "在同进程后台线程启动 Kestrel" "in-process"
         gateway.appExe.compositionRoot -> gateway.appExe.activationState "装载初始路由快照" "in-process"
 
@@ -134,9 +135,10 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关 —— 
         gateway.appExe.upstreamClients -> gateway.appExe.streamRelay "上游 SSE 原始帧" "in-process"
         gateway.appExe.streamRelay -> gateway.appExe.httpEndpoints "逐事件回写并 flush 到入站连接" "in-process"
 
-        gateway.appExe.repositories -> gateway.appExe.secretProtector "取明文 Key 时需现场解密" "in-process"
+        gateway.appExe.credentialInjector -> gateway.appExe.secretProtector "现场解密（全工程唯一解密调用点）" "in-process"
+        gateway.appExe.secretProtector -> gateway.appExe.repositories "IRealKeyVault 实现：加密后只存密文字节（C1 修正：Storage 不再反向依赖 Security）" "in-process"
         gateway.appExe.credentialInjector -> gateway.appExe.repositories "按【全局激活档】指向的 Provider 取 DPAPI 密文（D7）" "in-process"
-        gateway.appExe.credentialInjector -> gateway.appExe.upstreamClients "真实 Key 写入本次出站请求头（唯一跨界赋值点）" "in-process"
+        gateway.appExe.credentialInjector -> gateway.appExe.upstreamClients "作为其 HttpClient 管道处理器，在出站请求经过时写入真实 Key 鉴权头（唯一跨界赋值点；运行时装配，非编译期依赖）" "in-process"
 
         gateway.appExe.httpEndpoints -> gateway.appExe.runLog "每请求收尾写一行" "in-process"
         gateway.appExe.upstreamClients -> gateway.appExe.failoverPolicy "429/5xx 交由重试与轮转（Phase 2）" "in-process"
