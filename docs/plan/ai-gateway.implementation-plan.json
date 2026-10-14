@@ -68,6 +68,7 @@
         "ToolCallSession 进 Core",
         "RequestContext：只含 ProxyKeyFingerprint + RouteProfileId + 中止令牌，不含任何密钥字段",
         "ProxyKeyFingerprint 新类型（只包前缀片段，不包完整密钥）",
+        "IRealKeyVault 端口（S1 实测新增：保存/取用真实 Key 的用例入口，实现落在 Security，App 只见端口 —— 缺了它 S5 就会被迫把 Storage→Security 那条环加回来）",
         "IActivationState + 不可变快照契约（实现留给 S13）"
       ],
       "executionFit": "fits-one-run",
@@ -99,7 +100,7 @@
       "title": "Hosting 组合根骨架 + 绑定清单扩展方法",
       "covers": ["D3", "D9", "findings §2 结论"],
       "tasks": [
-        "AddAiGateway() 扩展方法承载全部 DI 绑定（不内联在 App.xaml.cs）",
+        "AddAiGateway() 扩展方法绑定全部【非 UI】具体实现（S1 实测：Hosting 不得引用 App，否则与 App→Hosting 成环撞 MSB4006；ViewModel 由 App 入口自己注册）",
         "单实例 Mutex",
         "监听地址写死 127.0.0.1 代码常量，端口从配置读、默认 8000",
         "Kestrel 在 WPF 进程内启动与优雅关闭",
@@ -108,7 +109,7 @@
       ],
       "executionFit": "fits-one-run",
       "demoBoundary": "起 App 后 curl 127.0.0.1:8000/health 得 200；UI 改端口后重启生效；二次启动被 Mutex 挡下",
-      "scopeNotes": "地址不是配置项，只有端口是 —— 这是 D9 的正面落地。",
+      "scopeNotes": "地址不是配置项，只有端口是 —— 这是 D9 的正面落地。对应 DSL 里的 httpListenerPolicy 组件。可执行入口留在 App（WinExe），Hosting 是 classlib，这样第二个入口（headless/CLI）引用 Hosting 时不会拖进 WPF。",
       "blockedBy": ["S1"],
       "techGuidance": "Hosting 的 I=1.00 是设计意图不是缺陷。绑定清单做成可复用扩展方法，是为了将来第二个入口（headless/CLI）不在两处重复漂移。"
     },
