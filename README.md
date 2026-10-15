@@ -22,7 +22,7 @@ C# / .NET 8 WPF 桌面应用。Claude Code 把 `ANTHROPIC_BASE_URL` 指向本机
 
 ## 先读这些（按顺序）
 
-1. `docs/architecture/ai-gateway.architecture-understanding.md` —— 决策 D1–D14、不做清单、外部事实（带网址）、两条脊柱、安全梯子。
+1. `docs/architecture/ai-gateway.architecture-understanding.md` —— 决策 D1–D16、不做清单、外部事实（带网址）、两条脊柱、安全梯子。
 2. `docs/architecture/ai-gateway.structurizr.dsl` —— 真相源，L1/L2/L3 三视图，15 个组件。**已用 Structurizr CLI 解析通过**。
 3. `docs/architecture/ai-gateway.dependency-impact-findings.md` —— 为什么是 3 + 1 个项目、十一条护栏、S1 实测教训、两扇后门、UI 层的守法、变更影响。
 4. `docs/architecture/ai-gateway.request-flow.dot` —— 一次请求：鉴权 → 路由 → 直通 / 翻译 → 注入 → 上游。

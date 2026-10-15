@@ -18,8 +18,9 @@ dotnet publish src/AiGateway.App/AiGateway.App.csproj -p:PublishProfile=Release-
 
 ## 安装（三分钟）
 
-1. 把整个目录拷到你想放的地方（例如 `D:\AiGateway\`）。
-2. 双击 `AiGateway.App.exe`。托盘出现图标，网关在 `http://127.0.0.1:8000` 上跑；主窗口右上角的叉是**隐藏到托盘**，不是退出——真正退出请右键托盘图标选「退出」。
+1. 把**整个目录一起**拷到你想放的地方（例如 `D:\AiGateway\`）。依赖框架的产物里，exe 需要同目录的那 3 个 dll 与两个 json——只拿走 exe 是起不来的。
+2. 双击 `AiGateway.App.exe`。托盘出现图标，网关在 `http://127.0.0.1:8000` 上跑（端口默认 8000，可在「设置」页改）；主窗口右上角的叉是**隐藏到托盘**，不是退出——真正退出请右键托盘图标选「退出」。
+   **放两份副本没意义**：配置不跟程序目录走，两份共用 `%LOCALAPPDATA%\AiGateway\config.json`；而且同一时刻只允许跑一个（单实例）。
 3. 窗口里配一次：
    - 「上游与 Key」页：新建上游（DeepSeek 填 `https://api.deepseek.com/anthropic`，模型填 `deepseek-flash, deepseek-v4-pro`）→ 保存 → 把这个上游的 Key 存进去（界面里之后再看不到它）。
    - 「代理密钥」页：生成一把，把弹出的配置片段合并进 Claude Code 的 `~/.claude/settings.json`（或设成同名环境变量）。**这段片段只显示一次。**
