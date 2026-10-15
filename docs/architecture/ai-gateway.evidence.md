@@ -158,6 +158,58 @@ DSL 的 15 个组件已全部落地。行号取**类声明行**（会随改动�
 | T4 | `max_tokens` vs `max_completion_tokens` | MiMo 官方样例用后者，我们发前者 | 没有 400，请求正常完成 | ✅ MiMo 收 `max_tokens`——当初担心的那条风险不成立 |
 | T5 | 上游 401 的失败速度 | 激活档还留在 DeepSeek（其 Key 已失效）时误跑了两次 | 401 在 **20 秒内**返回并显示，S8 那套三分钟重试没有出现 | ✅ `x-should-retry:false` 生效（这条验在**直通**路径；翻译路径的同类行为同源代码） |
 
-**过程中暴露的一个 UX 问题（未修，列为开放项）**：那两次误跑的根因是**一键切换没生效**——应用会**拒绝激活没有 Key 的上游**（S7 的设计），但提示一闪而过，用户会以为自己已经切过去了，于是请求仍走 DeepSeek、拿到一个与 MiMo 无关的 401。建议切换失败时给更显眼的反馈。**我没有改代码**；要不要立一条 RISK 行由你定。
+**过程中暴露的一个 UX 问题（未修，列为开放项）**：那两次误跑的根因是**一键切换没生效**——应用会**拒绝激活没有 Key 的上游**（S7 的设计），于是请求仍走 DeepSeek、拿到一个与 MiMo 无关的 401。**同日复核时更正了本段原先的说法**：我先前写「提示一闪而过」是错的。读了 `ViewModels/ActivationViewModel.cs` 后确认——失败时 `Message = ex.Message`（如「这个上游还没有保存 Key，请先在「上游与 Key」里保存 Key 再切换。」）会**常驻**在顶栏下方（红字），并且 `CurrentText` 一直显示「当前：DeepSeek · deepseek-flash」/「尚未激活任何上游，Claude Code 的请求会收到 503」。**所以不是没有提示，是提示没被看见**（一行灰字 + 一行红字，视觉权重太低）。对症的改法是**提高状态的可发现性**（把「当前激活档」做成一眼可见的主状态、失败时给带图标的警示块），而不是「加一个提示」。**我没有改代码**；要不要立一条 RISK 行由你定。
 
 **仍未覆盖**：① 翻译路径上的**客户端中止**（RISK-06 在 CSV 里如实标着「没有专题测试」）；② 真机上 Claude Code 的**交互式会话**（Esc / Ctrl+C、上下文压缩）——一直是人工项。
+
+## 10. cc-switch 对照研究（2026-10-15，实读源码）
+
+**为什么记这节**：它是同类里最强的在位者 —— **14.5 万星、MIT、当天（2026-10-15T09:01Z）仍在推**，Tauri + Rust。这节只写**事实与出处**，不写评判。读法是 `gh api` 取原文。
+
+**机制（与我方同构的部分）**：本机 HTTP 服务默认 `127.0.0.1:15721`（地址与端口可配，**含 `0.0.0.0`**，它的文档还教 WSL2 这么配）；改写客户端配置指向本机、退出时写回 direct；客户端配置里只放**占位密钥 `PROXY_MANAGED`** 与固定模型别名（`README.md` 第 484 行）。代理层体量：`proxy/forwarder.rs` **8482 行**、`proxy/handlers.rs` 4185 行、`proxy/usage/parser.rs` 1292 行。
+
+**它解掉的问题与解法**（出处均为 `src-tauri/src/...`）：
+
+| 问题 | 它的解法（文件） |
+| --- | --- |
+| 模型名会过期 | 按 baseURL **现查**：候选 `/v1/models`、`/models`、剥离已知兼容后缀后的变体；预设可覆写 `modelsUrl`（`services/model_fetch.rs`，候选顺序见源码 234–241 行） |
+| 跨上游混用 → 签名/密文失效 | 「**失败 → 剥离 → 对同一家重发一次**」的整流模式（`proxy/thinking_rectifier.rs` 722 行、`proxy/opaque_state_rectifier.rs` 804 行） |
+| 另一种协议**没有字段**放的东西 | 借 thinking signature / redacted-thinking 当信使，客户端回放时还原（`proxy/providers/reasoning_bridge.rs`） |
+| Chat 上游把思考**内联进正文** | 专门剥离：流式 `InlineThinkSplitter` / 非流式 `split_leading_think_block`，只认正文开头的块（`proxy/providers/inline_think.rs`） |
+| 函数参数**乱序/迟到**（MiniMax `/v1/responses`，实测 2026-10-03） | 把参数为空的结束事件**先扣住**，等真参数到了再放行（`proxy/providers/responses_late_arguments.rs`） |
+| 改客户端配置不破坏排版 | `shift_remove` 删除 + 原位改值 + 追加末尾；承诺「键、值、顺序不变；第一次写入可能规范化空白与转义，之后字节稳定」（`live/patch/json.rs`） |
+| 改坏了要能还回来 | 改写前把原配置**备份进库**（`database/schema.rs` 的 `proxy_live_backup` 表） |
+| 「能连上」≠「能用」 | 只探 base_url 可达性、**不发真实模型请求**；连通性检查**绝不触碰熔断器**，熔断器只由真实流量成败**被动**驱动（`services/stream_check.rs`） |
+| 客户端私有字段外泄 | 递归过滤 `_` 前缀字段、支持白名单（`proxy/body_filter.rs`） |
+| 帮用户省钱 | 转发前注入 `cache_control`（`proxy/cache_injector.rs`） |
+| 上游凭据怎么带 | `AuthInfo { api_key, strategy, access_token }` **策略枚举** + `masked_key()` 前 4 后 4 打码给日志（`proxy/providers/auth.rs`） |
+
+**对照出的我方位置**：
+
+- **主路不校验调用方**：`proxy/server.rs` 的 `build_router` 只有 `.route()`、**无中间件**（`proxy/mod.rs` 是纯声明）；唯一校验 `validate_claude_desktop_gateway_auth` 只挂在 Claude Desktop 那两个 handler 上（`proxy/handlers.rs:251-278`、`:401-422`）。→ 我们的**逐请求代理密钥**相当于把它只给 Desktop 做的那件事推广到了主路（RISK-08 的外部对照）。
+- **Key 是明文存的**：schema 里 provider 整份（含 `ANTHROPIC_AUTH_TOKEN`）就在 `providers.settings_config TEXT` 单列，**没有**保护器/密文/版本列；`database/dao/providers.rs`（1013 行）搜 `encrypt|decrypt|base64|cipher|obfuscat` **零命中**，读写就是 `row.get` + `serde_json`。→ 对照我们的 DPAPI + `protector_id` / `key_version`（RISK-01 的单向门）。
+- 我方已知空缺（已记进 `violations.csv`）：**RISK-19** 切上游后历史签名/密文失效（无整流层）、**RISK-20** 上游把思考内联进正文（无剥离）。
+
+**未定论（别当结论）**：① 加解密是否藏在 `store.rs` / `commands/*` 那一层（**未读**）；② 它的数据会同步到 WebDAV / S3（`services/webdav_sync.rs`、`s3_sync.rs`、`sync_protocol.rs`）—— 明文 Key 在库里、库又会同步，**会不会跟着出门、载荷有没有单独加密，未查**。
+
+**方法提醒**：`gh search code` 里带 `::` 或 `path:` 的查询在这台机器上会返回**假空结果**（我连踩两次），别把空结果当证据；用单 token 搜索或直接 `gh api` 取原文。
+
+### 10.1 补读的模块（同日第二/三批，共 9 个）
+
+| 模块（`src-tauri/src/...`） | 它解决的 |
+| --- | --- |
+| `proxy/providers/claude.rs`（2833 行） | 所谓"透传"其实是**透传 + 逐家规范化**：`normalize_anthropic_tool_thinking_history_for_provider`（按上游规范化工具/思考历史 —— 与 RISK-19 同源）、`normalize_deepseek_thinking_disabled_strip_effort`（DeepSeek 关思考时 strip 掉 effort）、`normalize_anthropic_messages_for_provider` |
+| `proxy/providers/streaming_codex_anthropic.rs`（1329 行） | **每对协议一个流式转换器**（4 客户端 × 4 上游格式 → 十几个文件、每个 1000+ 行）；本文件是 `streaming_responses.rs` 的反向 |
+| `proxy/providers/transform_codex_anthropic.rs`（3106 行） | 一对协议的完整转换；**`encode_anthropic_thinking_block` / `decode_anthropic_thinking_block`**（把 thinking 块编码成不透明字符串运过去、客户端回放时解回）、`effort_to_thinking_budget` |
+| `live/engine.rs`（321 行） | **改客户端文件的事务**：hash 先行 → 解析失败即停 → 内存里改 → 序列化 → 写临时文件 → **发布前字节级一次性备份** → **重读比对 hash、没变才 rename**；乐观锁（自家写入方共用锁），并写明外部进程不参与锁、**rename 前仍有极小窗口** |
+| `model_capabilities.rs`（291 行） | **模型能力表**：`is_confirmed_text_only_model`、`resolve_image_input_capability` —— 发之前先知道自己能不能发 |
+| `json_canonical.rs`（190 行） | 为**缓存命中**规范化 JSON（`canonicalize_tool_arguments_str` 等，键序一抖缓存就不命中）+ 短哈希 `short_sha256_hex` |
+| `handler_config.rs`（228 行） | 每家一份 `*_PARSER_CONFIG` / `*_HANDLER_CONFIG` 常量 + `*_usage_event_filter(data)`（"这一行是不是 usage 事件"） |
+| `proxy/sse.rs`（379 行，大半是测试） | **一份 SSE 边界清单**：LF / CRLF / 混合行尾且跨 chunk、UTF-8 多字节被 chunk 切开、空 chunk、`data:` 后可选空格、非法字节立即放行不累积、**超长残留有防御性上限** |
+| `usage/calculator.rs`（314 行） | 成本计算用**高精度 Decimal**（避免浮点误差），配 `model_pricing` 表 |
+
+**这次对照新增的我方空缺**（**未记 CSV，等你定**）：
+
+- **SSE 超长残留无上限**：我们用 `ReadLineAsync` 逐行读，上游若长时间不发换行就会无上限地堆缓冲（A3 那道"非事件流就拒绝"只挡住了最常见的一种）。它有 `defensive_guard_flushes_oversized_remainder`。
+- **发送前没有模型能力判断**：我们无条件把图片翻成 `image_url`，上游模型若是纯文本就会 400；它有纯文本模型判定与图片能力表。
+- **函数参数"迟到"**：结束事件先到、真参数随后才到（MiniMax 实测 2026-10-03）；我们的会话在 `finish_reason` 就关块收尾，会在真参数到达前收工。它扣住空参数的结束事件等真参数。
