@@ -18,7 +18,7 @@ AiGateway.Tests ──► 以上全部（InternalsVisibleTo）
 | --- | --- | --- |
 | AiGateway **不引用** Security | 网关 / 鉴权 / 日志代码拿到解密能力（FORBIDDEN-06/07） | 编译期**两道独立拦截**（S1 实测）：AiGateway 目标 `net8.0` 引用 `net8.0-windows` 的 Security 直接 **NU1201**；就算改了目标框架，Security → AiGateway 已存在，反向再加一条就是 **MSB4006 循环依赖**。护栏①测试是第三道 |
 | 只有 Security 引用 ProtectedData | 有人在别处直接调 DPAPI | 编译期：包引用；AiGateway 目标 `net8.0`，就算加了包，Windows 专属 API 也会触发 CA1416（警告即错误，S1 review 实测过这条） |
-| App 看不见两个库的内部类型 | UI 直接 `new` 出保护器或注入器（FORBIDDEN-03/08） | `internal` 默认（越界即 CS0122，S1 实测）。公开面只有：AiGateway 的 `AddAiGateway()`、`GatewayServer`（宿主入口，监听地址常量在它内部，App 改不了）与 `GatewayPortInUseException`、`IRealKeyVault`（只写，给 UI）、`IProxyKeyRegistry` + `IssuedProxyKey` + `ProxyKeyFingerprint` + `ProxyKeySummary`（签发 / 只给指纹的列表 / 吊销 / 删除代理密钥，给 UI）、`IGatewaySettings` + `ProviderConfig` + `ActiveSelection` + `UpstreamKind`（上游、激活、端口，给 UI；签名里没有任何 Key，S7）、`IRunLog` + `RunLogEntry` + `RunLogOutcome`（运行日志只有 Snapshot 一个方法，记录是定长安全字段，给 UI，S9）、`ICiphertextStore` + `CiphertextRecord`（只存取密文，给 Security）；Security 的 `AddAiGatewaySecurity()`。**给 Security 的是公开密文端口，而不是 `InternalsVisibleTo`**——后者会让 Security 看到 AiGateway 内部的上游客户端，等于给 FORBIDDEN-09 开后门；密文端口被谁拿到都解不开（解密点只有一处，护栏②） |
+| App 看不见两个库的内部类型 | UI 直接 `new` 出保护器或注入器（FORBIDDEN-03/08） | `internal` 默认（越界即 CS0122，S1 实测）。公开面只有：AiGateway 的 `AddAiGateway()`、`GatewayServer`（宿主入口，监听地址常量在它内部，App 改不了）与 `GatewayPortInUseException`、`IRealKeyVault`（只写，给 UI）、`IProxyKeyRegistry` + `IssuedProxyKey` + `ProxyKeyFingerprint` + `ProxyKeySummary`（签发 / 只给指纹的列表 / 吊销 / 删除代理密钥，给 UI）、`IGatewaySettings` + `ProviderConfig` + `ActiveSelection` + `UpstreamKind`（上游、激活、端口，给 UI；签名里没有任何 Key，S7）、`IRunLog` + `RunLogEntry` + `RunLogOutcome`（运行日志只有 Snapshot 一个方法，记录是定长安全字段，给 UI，S9）、`ICiphertextStore` + `CiphertextRecord`（只存取密文，给 Security）、`IUpstreamDiagnostics` + `ReachabilityReport` + `ModelListReport`（只读诊断：探可达性 / 拉模型清单，给 UI，S14；两个方法都经上游客户端发出，这个端口自己拿不到明文）；Security 的 `AddAiGatewaySecurity()`。**给 Security 的是公开密文端口，而不是 `InternalsVisibleTo`**——后者会让 Security 看到 AiGateway 内部的上游客户端，等于给 FORBIDDEN-09 开后门；密文端口被谁拿到都解不开（解密点只有一处，护栏②） |
 | 协议代码分不分程序集 | ——（入站只有一种协议，不存在两个 codec 互引） | 不拆 |
 
 第一版拆成 10 个程序集，大部分边界拦的是"两个 codec 互引""Core 反向依赖"这类在单入站下不存在的错误；代价却是实打实的：S1 骨架撞出两处程序集环（MSB4006）和一处传递引用泄露。
@@ -84,7 +84,7 @@ AiGateway.Tests ──► 以上全部（InternalsVisibleTo）
 
 H 的收益：没有任何代码能调用注入器；上游客户端不经手明文、甚至不知道注入器存在；provider id 经请求选项传递，键名是 AiGateway 里的 `UpstreamRequest.ProviderId`。
 
-**S5 落地后的细节**：注入时先清掉请求上已有的 `x-api-key` 与 `Authorization`（护栏⑩），再写入真实 Key，**请求发完立即删掉**（护栏⑨）；目前只写 `x-api-key`（Anthropic 与 DeepSeek 都认），M2 接 OpenAI 时再按上游类型加 `Authorization: Bearer`。"激活快照"没有另起一份数据：路由每次只读一次 `ConfigStore.Current`，从同一份快照里拿激活项、Provider 和"有没有 Key"，切换时不会读到半新半旧。
+**S5 落地后的细节**：注入时先清掉请求上已有的 `x-api-key` 与 `Authorization`（护栏⑩），再写入真实 Key，**请求发完立即删掉**（护栏⑨）；**按上游类型选头**：Anthropic 类写 `x-api-key`、OpenAI 类写 `Authorization: Bearer`（S11 落地，由 `UpstreamRequest.BearerAuth` 请求选项决定）。**S14 起这个口子还服务于只读诊断**（探上游可达性 / 拉模型清单）——它们经**同一个**上游客户端发出，所以密钥仍然只在注入器一处解密、只沿"上游客户端 → 上游"这一条边离开进程，诊断请求同样发完即删该头。"激活快照"没有另起一份数据：路由每次只读一次 `ConfigStore.Current`，从同一份快照里拿激活项、Provider 和"有没有 Key"，切换时不会读到半新半旧。
 
 ## 5. 变更影响（哪个改动最贵）
 

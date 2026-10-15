@@ -37,6 +37,7 @@ public static class AiGatewayServiceCollectionExtensions
         services.AddSingleton<AnthropicToOpenAiTranslator>();
         services.AddSingleton<OpenAiToAnthropicTranslator>();
         services.AddSingleton<OpenAiTranslationForwarder>();
+        services.AddSingleton<IUpstreamDiagnostics, UpstreamDiagnostics>();
         services.AddSingleton<IGatewaySettings, GatewaySettings>();
 
         // Never follow redirects: a redirect to another host would carry the injected x-api-key header there.

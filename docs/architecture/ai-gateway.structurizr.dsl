@@ -58,7 +58,7 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关。2026-
                     tags "Lib"
                 }
 
-                credentialInjector = component "真实密钥注入处理器" "[AiGateway.Security] HttpClient 管道里的 DelegatingHandler，由组合根经 Security 唯一的公开注册方法挂进上游客户端；没有任何组件能调用它。按请求选项里的 provider id 取密文 → 解密 → 先清掉请求上已有的 x-api-key 与 Authorization，再写入真实 Key 的 x-api-key；请求发完立即删掉该头，持有请求对象的代码事后读不到。不构造、不发起请求。" "DelegatingHandler" {
+                credentialInjector = component "真实密钥注入处理器" "[AiGateway.Security] HttpClient 管道里的 DelegatingHandler，由组合根经 Security 唯一的公开注册方法挂进上游客户端；没有任何组件能调用它。按请求选项里的 provider id 取密文 → 解密 → 先清掉请求上已有的 x-api-key 与 Authorization，再按上游类型写入真实 Key（Anthropic 类写 x-api-key、OpenAI 类写 Authorization: Bearer）；请求发完立即删掉该头，持有请求对象的代码事后读不到。S14 起它还服务只读诊断（探可达性 / 拉模型清单）—— 同样经这一个管道，所以仍是全工程唯一解密点。不构造、不发起请求。" "DelegatingHandler" {
                     tags "Security,HighRisk"
                 }
                 secretProtector = component "DPAPI 保护器与只写密钥库" "[AiGateway.Security] DPAPI CurrentUser + 每 Provider 独立 entropy。对外只实现只写端口 IRealKeyVault（Save / Delete / Exists），签名上拿不到明文；解密只供注入处理器在程序集内部使用。" "System.Security.Cryptography.ProtectedData" {

@@ -2,10 +2,17 @@ using System.Collections.ObjectModel;
 using AiGateway.Configuration;
 using AiGateway.Secrets;
 using AiGateway.Settings;
+using AiGateway.Upstream;
 
 namespace AiGateway.App.ViewModels;
 
 internal sealed record KindOption(UpstreamKind Kind, string Text);
+
+// 下拉里的一项：Preset 为 null 就是"自定义"（用户自己填）。
+internal sealed record PresetOption(string Name, ProviderPreset? Preset)
+{
+    public override string ToString() => Name;
+}
 
 internal sealed record ProviderRow(ProviderConfig Config, bool HasKey)
 {
@@ -26,21 +33,27 @@ internal sealed record ProviderRow(ProviderConfig Config, bool HasKey)
 
 internal sealed class ProvidersViewModel : ObservableObject
 {
+    private const string DefaultModelHint = "多个用逗号分隔。切换时从这里选；也可以在上方「模型」框里直接输入别的名字。";
+
     private readonly IGatewaySettings _settings;
     private readonly IRealKeyVault _vault;
+    private readonly IUpstreamDiagnostics _diagnostics;
     private readonly Action _changed;
 
     private ProviderRow? _selected;
+    private PresetOption? _selectedPreset;
     private string _name = string.Empty;
     private UpstreamKind _kind = UpstreamKind.Anthropic;
     private string _baseUrl = string.Empty;
     private string _models = string.Empty;
+    private string _modelHint = DefaultModelHint;
     private string _message = string.Empty;
 
-    public ProvidersViewModel(IGatewaySettings settings, IRealKeyVault vault, Action changed)
+    public ProvidersViewModel(IGatewaySettings settings, IRealKeyVault vault, IUpstreamDiagnostics diagnostics, Action changed)
     {
         _settings = settings;
         _vault = vault;
+        _diagnostics = diagnostics;
         _changed = changed;
         Refresh();
     }
@@ -49,6 +62,9 @@ internal sealed class ProvidersViewModel : ObservableObject
 
     public IReadOnlyList<KindOption> Kinds { get; } =
         [new(UpstreamKind.Anthropic, KindText(UpstreamKind.Anthropic)), new(UpstreamKind.OpenAI, KindText(UpstreamKind.OpenAI))];
+
+    public IReadOnlyList<PresetOption> Presets { get; } =
+        [new("自定义（自己填）", null), .. ProviderPresets.All.Select(p => new PresetOption(p.Name, p))];
 
     public ProviderRow? Selected
     {
@@ -62,6 +78,18 @@ internal sealed class ProvidersViewModel : ObservableObject
         }
     }
 
+    public PresetOption? SelectedPreset
+    {
+        get => _selectedPreset;
+        set
+        {
+            if (Set(ref _selectedPreset, value))
+            {
+                ApplyPreset(value?.Preset);
+            }
+        }
+    }
+
     public string Name { get => _name; set => Set(ref _name, value); }
 
     public UpstreamKind Kind { get => _kind; set => Set(ref _kind, value); }
@@ -70,7 +98,14 @@ internal sealed class ProvidersViewModel : ObservableObject
 
     public string Models { get => _models; set => Set(ref _models, value); }
 
+    public string ModelHint { get => _modelHint; private set => Set(ref _modelHint, value); }
+
     public string Message { get => _message; private set => Set(ref _message, value); }
+
+    public bool HasMessage => _message.Length > 0;
+
+    // 列表为空时整块换成引导面板 —— 空表格什么都不说，是"第一次用看不懂"的主因。
+    public bool IsEmpty => Rows.Count == 0;
 
     public bool CanSaveKey => Selected is not null;
 
@@ -83,7 +118,8 @@ internal sealed class ProvidersViewModel : ObservableObject
     public void New()
     {
         Selected = null;
-        Message = "填好名称、地址和模型后点「保存」。";
+        SelectedPreset = Presets[0];
+        Message = "填好名称、地址和模型后点「保存」。不知道填什么就从上面的「一键预设」里选一家。";
     }
 
     public void Save()
@@ -144,6 +180,46 @@ internal sealed class ProvidersViewModel : ObservableObject
         _changed();
     }
 
+    // 只探"能不能到"，顺带用状态码说一句凭据有没有被拒；不发任何模型请求，所以不花钱。
+    public async Task ProbeAsync()
+    {
+        if (Selected is null)
+        {
+            Message = "先在上面选中一个上游。";
+            return;
+        }
+
+        Message = "正在测…";
+        var report = await _diagnostics.ProbeAsync(Selected.Id);
+        Message = report.Reachable
+            ? $"地址可达：HTTP {report.StatusCode}，往返 {report.RoundTrip!.Value.TotalMilliseconds:0} ms。{report.Problem}　可达不等于 Key 正确 —— Key 对不对以真实请求为准。"
+            : $"不可达：{report.Problem}";
+    }
+
+    // 只对 OpenAI 类上游有意义：拉回来的模型名填进「模型」框，由用户删减后再保存。
+    public async Task FetchModelsAsync()
+    {
+        if (Selected is null)
+        {
+            Message = "先在上面选中一个上游。";
+            return;
+        }
+
+        Message = "正在拉取…";
+        var report = await _diagnostics.FetchModelsAsync(Selected.Id);
+        if (report.Supported)
+        {
+            Models = string.Join(", ", report.Models);
+            Message = $"拉到 {report.Models.Count} 个模型，已填进上面的「模型」框 —— 删掉不需要的再点「保存」。";
+            return;
+        }
+
+        Message = report.Problem!;
+    }
+
+    // 给 async 的诊断调用兜底：只报类型名，不把异常正文丢到界面上（它可能带回上游回显的片段）。
+    public void ReportDiagnosticFailure(Exception ex) => Message = $"诊断失败：{ex.GetType().Name}。可到「运行日志」页确认。";
+
     public void Refresh(string? selectId = null)
     {
         Rows.Clear();
@@ -153,6 +229,25 @@ internal sealed class ProvidersViewModel : ObservableObject
         }
 
         Select(Rows.FirstOrDefault(r => r.Id == selectId));
+        Raise(nameof(IsEmpty));
+    }
+
+    private void ApplyPreset(ProviderPreset? preset)
+    {
+        if (preset is null)
+        {
+            ModelHint = DefaultModelHint;
+            return;
+        }
+
+        // 名称取括号前的短名（"DeepSeek（Anthropic 兼容，直通）" → "DeepSeek"），地址与类型照填。
+        Name = preset.Name.Split('（')[0];
+        Kind = preset.Kind;
+        BaseUrl = preset.BaseUrl;
+        ModelHint = preset.ExampleModel.Length > 0
+            ? $"示例：{preset.ExampleModel} —— 只是示例，换成本厂家当前有效的模型名（上游改名比发版快）。{preset.Note}"
+            : $"模型名以本厂家当前文档为准。{preset.Note}";
+        Message = "已按预设填好类型与地址，模型名请自行确认。";
     }
 
     private void Select(ProviderRow? row)
@@ -163,6 +258,7 @@ internal sealed class ProvidersViewModel : ObservableObject
         Kind = row?.Config.Kind ?? UpstreamKind.Anthropic;
         BaseUrl = row?.BaseUrl ?? string.Empty;
         Models = row?.ModelsText ?? string.Empty;
+        ModelHint = DefaultModelHint;
         Raise(nameof(CanSaveKey));
     }
 }

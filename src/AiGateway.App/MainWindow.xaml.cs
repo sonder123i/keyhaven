@@ -26,6 +26,8 @@ public partial class MainWindow : Window
 
     private void OnTabChanged(object sender, SelectionChangedEventArgs e)
     {
+        // 代理密钥是在另一个页签签发的，切回来时顺手刷新顶栏那句状态。
+        _vm.Activation.RefreshKeyHint();
         if (Tabs.SelectedItem == RunLogTab)
         {
             _vm.RunLog.Refresh();
@@ -60,12 +62,31 @@ public partial class MainWindow : Window
         KeyBox.Clear();
     }
 
+    // 诊断是 async 的：异常绝不能让它逃出 async void（那会直接杀掉进程）。
+    private async void OnProbe(object sender, RoutedEventArgs e) => await Guarded(_vm.Providers.ProbeAsync);
+
+    private async void OnFetchModels(object sender, RoutedEventArgs e) => await Guarded(_vm.Providers.FetchModelsAsync);
+
+    private async Task Guarded(Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch (Exception ex)
+        {
+            _vm.Providers.ReportDiagnosticFailure(ex);
+        }
+    }
+
     private void OnGenerateKey(object sender, RoutedEventArgs e)
     {
         if (_vm.ProxyKeys.Generate() is { } issued)
         {
             new IssuedKeyWindow(issued.Label, _vm.ProxyKeys.SnippetFor(issued)) { Owner = this }.ShowDialog();
         }
+
+        _vm.Activation.RefreshKeyHint();
     }
 
     private void OnRevokeKey(object sender, RoutedEventArgs e)
@@ -73,6 +94,7 @@ public partial class MainWindow : Window
         if (_vm.ProxyKeys.Selected is { } row && Confirm($"吊销「{row.Label}」？用它的客户端会立刻被拒绝，且不可恢复。"))
         {
             _vm.ProxyKeys.Revoke();
+            _vm.Activation.RefreshKeyHint();
         }
     }
 
@@ -81,6 +103,7 @@ public partial class MainWindow : Window
         if (_vm.ProxyKeys.Selected is { } row && Confirm($"删除「{row.Label}」？"))
         {
             _vm.ProxyKeys.Delete();
+            _vm.Activation.RefreshKeyHint();
         }
     }
 

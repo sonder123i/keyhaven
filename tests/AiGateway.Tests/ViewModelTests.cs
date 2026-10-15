@@ -8,6 +8,7 @@ using AiGateway.RunLog;
 using AiGateway.Secrets;
 using AiGateway.Security;
 using AiGateway.Settings;
+using AiGateway.Upstream;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace AiGateway.Tests;
@@ -37,7 +38,7 @@ public sealed class ViewModelTests : IDisposable
     private IGatewaySettings Settings => _services.GetRequiredService<IGatewaySettings>();
 
     private ProvidersViewModel NewProviders(Action? changed = null) =>
-        new(Settings, _services.GetRequiredService<IRealKeyVault>(), changed ?? (() => { }));
+        new(Settings, _services.GetRequiredService<IRealKeyVault>(), _services.GetRequiredService<IUpstreamDiagnostics>(), changed ?? (() => { }));
 
     private static bool Retains(object root, string secret)
     {
@@ -146,7 +147,7 @@ public sealed class ViewModelTests : IDisposable
     [Fact]
     public void Switching_needs_a_key_first_and_then_takes_effect()
     {
-        var activation = new ActivationViewModel(Settings);
+        var activation = new ActivationViewModel(Settings, _services.GetRequiredService<IProxyKeyRegistry>());
         var providers = NewProviders(activation.Refresh);
         providers.Name = "DeepSeek";
         providers.BaseUrl = "https://api.deepseek.com/anthropic";
@@ -233,4 +234,72 @@ public sealed class ViewModelTests : IDisposable
 
         Assert.Contains(messageMentions, vm.Message);
     }
+
+    [Fact]
+    public void Picking_a_preset_fills_kind_and_address_but_leaves_the_model_to_the_user()
+    {
+        var vm = NewProviders();
+
+        vm.SelectedPreset = DeepSeekPreset(vm);
+
+        Assert.Equal(UpstreamKind.Anthropic, vm.Kind);
+        Assert.Equal("https://api.deepseek.com/anthropic", vm.BaseUrl);
+        Assert.Equal("DeepSeek", vm.Name);
+        // 模型名不预填；提示里给示例，并带上"实测状态"那句话
+        Assert.Empty(vm.Models);
+        Assert.Contains("deepseek-flash", vm.ModelHint);
+        Assert.Contains("实测", vm.ModelHint);
+    }
+
+    [Fact]
+    public void An_empty_list_shows_the_guided_state_instead_of_a_blank_table()
+    {
+        var vm = NewProviders();
+
+        Assert.True(vm.IsEmpty);
+
+        vm.SelectedPreset = DeepSeekPreset(vm);
+        vm.Models = "deepseek-flash";
+        vm.Save();
+
+        Assert.False(vm.IsEmpty);
+        Assert.Equal("已添加。下一步：在下面保存这个上游的 Key。", vm.Message);
+    }
+
+    [Fact]
+    public void The_top_badge_flips_to_attention_until_something_is_activated()
+    {
+        var activation = new ActivationViewModel(Settings, _services.GetRequiredService<IProxyKeyRegistry>());
+
+        Assert.False(activation.IsActive);
+        Assert.Contains("尚未激活", activation.CurrentText);
+        // 一把代理密钥都没有时，顶部那句必须说出来 —— 否则客户端连不上而界面一片安静
+        Assert.Contains("还没有生成代理密钥", activation.ProxyKeyText);
+
+        _services.GetRequiredService<IProxyKeyRegistry>().Create("笔记本");
+        activation.RefreshKeyHint();
+        Assert.Contains("1 把可用", activation.ProxyKeyText);
+    }
+
+    [Fact]
+    public void A_failed_switch_says_it_did_not_take_effect()
+    {
+        var activation = new ActivationViewModel(Settings, _services.GetRequiredService<IProxyKeyRegistry>());
+        var providers = NewProviders(activation.Refresh);
+        providers.SelectedPreset = DeepSeekPreset(providers);
+        providers.Models = "deepseek-flash";
+        providers.Save();
+
+        // 还没存 Key，切换必须被拒 —— 而且要说清"这一步没生效"
+        activation.SelectedModel = "deepseek-flash";
+        activation.Activate();
+
+        Assert.Null(Settings.Active);
+        Assert.True(activation.HasMessage);
+        Assert.Contains("这一步没生效", activation.Message);
+        Assert.False(activation.IsActive);
+    }
+
+    private static PresetOption DeepSeekPreset(ProvidersViewModel vm) =>
+        vm.Presets.Single(p => p.Preset?.Name.StartsWith("DeepSeek（Anthropic") == true);
 }

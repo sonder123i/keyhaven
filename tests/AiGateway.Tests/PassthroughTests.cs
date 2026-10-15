@@ -28,14 +28,14 @@ internal sealed class GatewayHarness : IAsyncDisposable
 
     public string ProxyKey { get; private set; } = null!;
 
-    public static async Task<GatewayHarness> StartAsync(Func<HttpContext, Task>? upstreamResponds = null, string kind = "anthropic", bool storeKey = true)
+    public static async Task<GatewayHarness> StartAsync(Func<HttpContext, Task>? upstreamResponds = null, string kind = "anthropic", bool storeKey = true, string basePathSuffix = "")
     {
         var harness = new GatewayHarness(await StubUpstream.StartAsync(upstreamResponds));
         var config = harness._dir.File("config.json");
         // Anthropic upstreams keep the /anthropic suffix and get /v1/messages appended; OpenAI ones append /chat/completions.
-        var baseUrl = kind == "open_ai"
+        var baseUrl = (kind == "open_ai"
             ? harness.Upstream.BaseAddress.ToString().TrimEnd('/')
-            : harness.Upstream.BaseAddress + "anthropic";
+            : harness.Upstream.BaseAddress + "anthropic") + basePathSuffix;
         File.WriteAllText(config, $$"""
             {
               "port": 0,

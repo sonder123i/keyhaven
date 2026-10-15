@@ -6,7 +6,8 @@
   "note": "covers 用决策 / 规则 ID（D*、FORBIDDEN-*、RISK-*、OPEN-*、护栏①–⑤）。M1 = S1–S8：真 Claude Code 经网关直通 DeepSeek 可用，零协议翻译。M2 = S11–S12：OpenAI 翻译。",
   "milestones": {
     "M1": ["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"],
-    "M2": ["S11", "S12"]
+    "M2": ["S11", "S12"],
+    "M3": ["S14"]
   },
   "stories": [
     {
@@ -233,6 +234,24 @@
       "scopeNotes": "实现期我做的判断，可推翻：① RISK-03 / RISK-05 标 CLOSED-S12 但都带保留——RISK-03 的「上游会不会按 include_usage 给 usage」当时仍未核实（真机项，写进了 detection）——**2026-10-15 真机验收已证实上游会给（MiMo），RISK-03 现为 CLOSED**；② RISK-06 保持 MEDIUM：翻译路径同样把 aborted 传下去，但**没有专题测试**，属本轮未闭环（要补就是照搬 S6 那条挂断测试）；③ 本轮任务口径是「关闭 OPEN / RISK 行」，所以没往 CSV 加新行——连 S11/S12 review 里那条 A1（OpenAI 只在末尾给 usage，message_start 的 input_tokens 只能是 0）也没进 CSV，它目前只在我这边记着；④ evidence §8 的行号取类声明行，并写明会随改动漂移。",
       "blockedBy": ["S9", "S10", "S12"],
       "techGuidance": "Structurizr CLI 的下载在本会话被策略拦下，替代做法是先做结构自检（花括号配平 / 描述里无尖括号 / 无死样式 / 无残留标签）。一个坑：Structurizr 的 Person / SoftwareSystem / Container / Component / Element 是**内建类型标签**，按元素类型自动生效、不出现在 tags 行里——我的「死样式」检查因此会把 element \"Person\" 误报成死样式，别照着删。另一个沿用 README 的坑：描述里写尖括号会让导出的 DOT 渲染失败。"
+    },
+    {
+      "id": "S14",
+      "title": "傻瓜式：可发现性重排 + 一键预设厂家 + 只读诊断",
+      "covers": ["D5", "维护约定", "cc-switch 对照（evidence.md §10）"],
+      "tasks": [
+        "顶栏主状态徽标：当前上游·模型一眼可见，未激活时整块变告警色；旁边显示代理密钥可用把数（0 把时明说客户端连不上）",
+        "切换失败：带边框的警示块 + 说明「这一步没生效」",
+        "上游列表为空时不摆空表格，给三步引导 + 一个大按钮",
+        "一键预设：把「类型 + 地址」按厂家预填；模型名刻意不预填（只给示例与实测状态）",
+        "只读诊断端口：探上游可达性（不发真实模型请求）+ 按 /models 拉模型清单（仅 OpenAI 类）",
+        "护栏测试：预设表不得夹带推广链接 / 中转商痕迹，地址必须是 API 根且 https"
+      ],
+      "executionFit": "fits-one-run",
+      "demoBoundary": "已于 2026-10-15 完成，163 测试全绿（+19：预设 6、诊断 9、VM 4）。**真 exe 走查（UIA 只读导出界面树）**核到 XAML 绑定真的解析了：顶栏显示「当前：ds · deepseek-flash（Claude Code 发来的任何模型名都会被换成这个）」、下一行「代理密钥：4 把可用」；空状态面板在他有 2 个上游时**正确地不出现在树里**（间接证明 IsEmpty 绑定生效）；「测试连接」「拉取模型」两个按钮都在树里；地址 Hint 已是新文案。**未由我点按钮验**（UIA 点击不稳），留给他点一次。**红灯 5 组**（各自只让对应测试红）：① 预设表塞进 ?aff= 链接 → 只 No_preset_carries_a_promotion_or_affiliate_trail 红；② IsActive 恒真（告警失效）→ 徽标与失败文案两条红；③ IsEmpty 恒假（空状态失效）→ An_empty_list_shows_the_guided_state… 红；④ 拉模型候选顺序颠倒 → Models_come_back_as_ids… 红；⑤ 去掉失败文案的「这一步没生效」→ A_failed_switch_says_it_did_not_take_effect 红。另：**诊断按上游类型选鉴权头**这条是被新测试当场抓出的真 bug（原先只写 x-api-key，对 OpenAI 类上游应为 Bearer）。",
+      "scopeNotes": "实现期我做的判断，可推翻：① **预设只收厂家本体**（Anthropic/DeepSeek/MiMo/OpenAI 共 6 条），剔掉 cc-switch 那张 60+ 家表里的二次分销中转商与全部推广链接（?aff= / /invite/ / utm_），并用测试守住；地址只写我核实过的，未核实的在 Note 里明标。② **模型名刻意不预填**——今天两次踩到过期（DeepSeek 改名、MiMo V2.5 有下线期限）。③ 诊断是**新的窄公开端口** IUpstreamDiagnostics；**没有新增 DSL 组件**（它是「上游 HTTP 客户端」的一种用法），公开面补进了 findings §1；注入器的口径也同步改成「按上游类型写 x-api-key 或 Bearer，且 S14 起还服务只读诊断」。④ 诊断自己掐 10 秒预算（上游客户端刻意无超时）。⑤「可达 ≠ Key 正确」是从 cc-switch 的 stream_check 学分层的；我们的探测**带 Key**，所以比它多答一句「凭据被拒」。⑥ 拉模型候选顺序也借它的做法（地址已含版本段就只试 {base}/models）。",
+      "blockedBy": ["S13"],
+      "techGuidance": "WPF：BooleanToVisibilityConverter 要作为资源声明；ComboBox 用 DisplayMemberPath 而不是 DisplayMemberBinding（后者是 GridViewColumn 的）；**XAML 绑定写错是静默失败**，构建成功不代表绑定解析了——真 exe 上验证的办法是 UIA 只读导出界面树（按进程 MainWindowHandle 找窗口，结果写 UTF-8 文件再用 Read 看，绕开 GBK 控制台）。VM 层新增依赖会打断既有测试的构造，改构造时顺手补新行为的断言。"
     }
   ]
 }
