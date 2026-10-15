@@ -62,8 +62,8 @@ public sealed class GatewayServer : IAsyncDisposable
     {
         var services = context.RequestServices;
         var resolved = services.GetRequiredService<RouteResolver>().Resolve();
-        return resolved.Route is { Kind: UpstreamKind.OpenAI }
-            ? services.GetRequiredService<OpenAiTranslationForwarder>().ForwardAsync(context, resolved)
+        return resolved.Route is { Kind: UpstreamKind.OpenAI } openAi
+            ? services.GetRequiredService<OpenAiTranslationForwarder>().ForwardAsync(context, openAi)
             : services.GetRequiredService<PassthroughForwarder>().ForwardAsync(context, resolved);
     }
 

@@ -230,4 +230,64 @@ public class StreamTranslationTests
         var error = JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
         Assert.Equal("authentication_error", error["error"]!["type"]!.GetValue<string>());
     }
+
+    [Fact]
+    public async Task A_malformed_data_line_is_skipped_not_fatal()
+    {
+        await using var gw = await GatewayHarness.StartAsync(async context =>
+        {
+            context.Response.ContentType = "text/event-stream";
+            await context.Response.WriteAsync(Sse(Chunks[..2]));
+            await context.Response.WriteAsync("data: {this is not json\n\n");
+            await context.Response.WriteAsync(Sse(Chunks[2..]));
+        }, kind: "open_ai");
+
+        using var response = await gw.Client.SendAsync(gw.Messages(StreamingRequest));
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        // The bad line is dropped and the stream keeps going: events from before and after it both arrive.
+        Assert.Contains("让我", body);
+        Assert.Contains("查一下", body);
+        Assert.Contains("message_stop", body);
+        Assert.DoesNotContain("this is not json", body);
+    }
+
+    [Fact]
+    public async Task An_upstream_that_ignores_stream_is_refused_not_answered_with_an_empty_message()
+    {
+        // A 200 with a plain completion instead of an event stream: nothing would ever be parsed out of it.
+        const string completion = """{"id":"chatcmpl-1","choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}""";
+        await using var gw = await GatewayHarness.StartAsync(async context =>
+        {
+            context.Response.ContentType = "application/json";
+            await context.Response.WriteAsync(completion);
+        }, kind: "open_ai");
+
+        using var response = await gw.Client.SendAsync(gw.Messages(StreamingRequest));
+
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        Assert.Equal("false", response.Headers.GetValues("x-should-retry").Single());
+        var error = JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
+        Assert.Equal("api_error", error["error"]!["type"]!.GetValue<string>());
+        Assert.Contains("event stream", error["error"]!["message"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task An_error_body_that_is_not_JSON_still_becomes_a_shaped_error()
+    {
+        await using var gw = await GatewayHarness.StartAsync(async context =>
+        {
+            context.Response.StatusCode = StatusCodes.Status502BadGateway;
+            context.Response.ContentType = "text/html";
+            await context.Response.WriteAsync("<html><body>bad gateway</body></html>");
+        }, kind: "open_ai");
+
+        using var response = await gw.Client.SendAsync(gw.Messages(StreamingRequest));
+
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        var error = JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
+        Assert.Equal("api_error", error["error"]!["type"]!.GetValue<string>());
+        Assert.Contains("The upstream returned 502", error["error"]!["message"]!.GetValue<string>());
+    }
 }

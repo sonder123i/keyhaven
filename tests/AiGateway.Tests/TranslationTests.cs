@@ -1,7 +1,9 @@
 using System.Net;
 using System.Text.Json.Nodes;
+using AiGateway.RunLog;
 using AiGateway.Translation;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AiGateway.Tests;
 
@@ -264,4 +266,58 @@ public class TranslationTests
         context.Response.ContentType = "application/json";
         await context.Response.WriteAsync(json);
     }
+
+    [Fact]
+    public async Task A_200_body_that_is_not_JSON_is_a_readable_502_not_a_crash()
+    {
+        await using var gw = await GatewayHarness.StartAsync(async context =>
+        {
+            context.Response.ContentType = "text/html";
+            await context.Response.WriteAsync("<html><body>misconfigured gateway</body></html>");
+        }, kind: "open_ai");
+
+        using var response = await gw.Client.SendAsync(gw.Messages(NonStreamingRequest));
+
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        var error = JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
+        Assert.Equal("api_error", error["error"]!["type"]!.GetValue<string>());
+        Assert.Contains("not a JSON object", error["error"]!["message"]!.GetValue<string>());
+    }
+
+    // The run log's field means "time to the first upstream body byte"; reading the body whole would stamp it at the end.
+    [Fact]
+    public async Task First_byte_is_stamped_when_the_body_starts_not_when_it_ends()
+    {
+        const string completion = """{"id":"chatcmpl-1","choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}""";
+        var release = new TaskCompletionSource();
+        await using var gw = await GatewayHarness.StartAsync(async context =>
+        {
+            context.Response.ContentType = "application/json";
+            // The body starts arriving at once and is held open for a second, so "first byte" and "last byte" are far apart.
+            await context.Response.WriteAsync(completion[..20]);
+            await context.Response.Body.FlushAsync();
+            await release.Task;
+            await context.Response.WriteAsync(completion[20..]);
+        }, kind: "open_ai");
+
+        var inFlight = gw.Client.SendAsync(gw.Messages(NonStreamingRequest));
+        await Task.Delay(1000);
+        release.SetResult();
+        (await inFlight).Dispose();
+
+        var ring = gw.Server.Services.GetRequiredService<RunLogRing>();
+        await WaitUntil(() => ring.Snapshot().Count > 0);
+        var firstByte = Assert.Single(ring.Snapshot()).FirstByte;
+
+        Assert.NotNull(firstByte);
+        Assert.True(firstByte < TimeSpan.FromMilliseconds(500), $"FirstByte was {firstByte}");
+    }
+
+    private static Task WaitUntil(Func<bool> condition) => Task.Run(async () =>
+    {
+        while (!condition())
+        {
+            await Task.Delay(25);
+        }
+    }).WaitAsync(TimeSpan.FromSeconds(10));
 }

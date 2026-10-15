@@ -14,9 +14,9 @@ using Microsoft.Extensions.Primitives;
 
 namespace AiGateway.Translation;
 
-// The translation path (M2): an OpenAI-only upstream. Requests are rewritten into chat/completions and the
-// non-streaming answer is made back into an Anthropic message. Streaming re-encoding is the tool-call block
-// lifecycle and lands with S12, so a stream request is refused here rather than sent and mistranslated.
+// The translation path (M2): an OpenAI-only upstream. Requests are rewritten into chat/completions, and the answer
+// is made back into an Anthropic shape — one message when the client did not ask to stream, an event sequence via
+// OpenAiStreamSession when it did.
 internal sealed class OpenAiTranslationForwarder(
     IHttpClientFactory clients,
     AnthropicToOpenAiTranslator requestTranslator,
@@ -28,11 +28,10 @@ internal sealed class OpenAiTranslationForwarder(
 
     private static readonly JsonSerializerOptions BodyJson = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
-    public async Task ForwardAsync(HttpContext context, RouteResult resolved)
+    public async Task ForwardAsync(HttpContext context, UpstreamRoute route)
     {
         var aborted = context.RequestAborted;
         var state = RunRequestState.For(context)!;
-        var route = resolved.Route!;
         state.Provider = route.ProviderId;
         state.Model = route.Model;
 
@@ -90,21 +89,27 @@ internal sealed class OpenAiTranslationForwarder(
 
         using (response)
         {
-            var payload = await response.Content.ReadAsStringAsync(aborted);
-            state.FirstByte ??= Clock.Elapsed - started;
             ForwardStatusHeaders(response, context);
+            using var responseBody = await ReadBodyAsync(response, state, started, aborted);
 
             if (!response.IsSuccessStatusCode)
             {
                 Mark(context, RunLogOutcome.Completed);
-                await FailFromUpstream(context, response.StatusCode, payload);
+                await FailFromUpstream(context, response.StatusCode, TryParseObject(responseBody));
                 return;
             }
 
-            if (JsonNode.Parse(payload) is not JsonObject completion || responseTranslator.TranslateMessage(completion, route.Model) is not { } message)
+            var completion = TryParseObject(responseBody);
+            var message = completion is null ? null : responseTranslator.TranslateMessage(completion, route.Model);
+            if (message is null)
             {
                 Mark(context, RunLogOutcome.Completed);
-                await Fail(context, StatusCodes.Status502BadGateway, "api_error", "The OpenAI upstream returned a response with no completion choices.");
+                // A 200 whose body is not JSON (a misconfigured BaseUrl landing on an HTML page) is the upstream's
+                // problem, not an unhandled crash: say so in the shape the client can read.
+                await Fail(context, StatusCodes.Status502BadGateway, "api_error",
+                    completion is null
+                        ? "The OpenAI upstream returned a body that is not a JSON object."
+                        : "The OpenAI upstream returned a response with no completion choices.");
                 return;
             }
 
@@ -153,11 +158,21 @@ internal sealed class OpenAiTranslationForwarder(
         {
             if (!response.IsSuccessStatusCode)
             {
-                var payload = await response.Content.ReadAsStringAsync(aborted);
-                state.FirstByte ??= Clock.Elapsed - started;
                 ForwardStatusHeaders(response, context);
+                using var error = await ReadBodyAsync(response, state, started, aborted);
                 Mark(context, RunLogOutcome.Completed);
-                await FailFromUpstream(context, response.StatusCode, payload);
+                await FailFromUpstream(context, response.StatusCode, TryParseObject(error));
+                return;
+            }
+
+            // Some OpenAI-compatible endpoints ignore stream:true and answer with one JSON completion. Read as a stream
+            // that yields no events at all, that becomes an empty message — silently wrong, and the worst kind of
+            // failure to diagnose — so refuse it loudly instead of answering nothing.
+            if (!string.Equals(response.Content.Headers.ContentType?.MediaType, "text/event-stream", StringComparison.OrdinalIgnoreCase))
+            {
+                Mark(context, RunLogOutcome.Completed);
+                await Fail(context, StatusCodes.Status502BadGateway, "api_error",
+                    "The upstream did not return an event stream for a streaming request.");
                 return;
             }
 
@@ -184,7 +199,9 @@ internal sealed class OpenAiTranslationForwarder(
                         break;
                     }
 
-                    if (JsonNode.Parse(payload) is JsonObject chunk)
+                    // A malformed line — or a provider's non-JSON keep-alive — is skipped, not fatal: one bad line
+                    // must not truncate a stream the client has already accepted (headers are long gone).
+                    if (TryParseObject(payload) is { } chunk)
                     {
                         await EmitAsync(context.Response, session.OnChunk(chunk), aborted);
                     }
@@ -257,7 +274,8 @@ internal sealed class OpenAiTranslationForwarder(
     }
 
     // The upstream's error body is OpenAI-shaped; the client only understands Anthropic-shaped errors, so rewrap it.
-    private static Task FailFromUpstream(HttpContext context, HttpStatusCode status, string payload)
+    // A body that is not JSON at all (an HTML error page, say) still becomes an Anthropic-shaped error, just without its message.
+    private static Task FailFromUpstream(HttpContext context, HttpStatusCode status, JsonObject? errorBody)
     {
         var type = status switch
         {
@@ -269,14 +287,46 @@ internal sealed class OpenAiTranslationForwarder(
             _ => "api_error",
         };
 
-        return AnthropicErrors.Create((int)status, type, UpstreamMessage(payload) ?? $"The upstream returned {(int)status}.").ExecuteAsync(context);
+        var message = errorBody?["error"]?["message"]?.GetValue<string>() ?? $"The upstream returned {(int)status}.";
+        return AnthropicErrors.Create((int)status, type, message).ExecuteAsync(context);
     }
 
-    private static string? UpstreamMessage(string payload)
+    // Buffer the body while stamping the first byte as it arrives: ReadAsStringAsync would stamp it only after the whole
+    // body, which is not what the run log's field means. Parsing from the stream also tolerates a byte-order mark.
+    private static async Task<MemoryStream> ReadBodyAsync(HttpResponseMessage response, RunRequestState state, TimeSpan started, CancellationToken cancellationToken)
+    {
+        await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+        var buffer = new MemoryStream();
+        var chunk = new byte[16 * 1024];
+        int read;
+        while ((read = await source.ReadAsync(chunk, cancellationToken)) > 0)
+        {
+            state.FirstByte ??= Clock.Elapsed - started;
+            buffer.Write(chunk, 0, read);
+        }
+
+        buffer.Position = 0;
+        return buffer;
+    }
+
+    // Parsing never throws out of here: a body or an SSE line that is not a JSON object is simply not usable.
+    private static JsonObject? TryParseObject(Stream body)
     {
         try
         {
-            return JsonNode.Parse(payload) is JsonObject error ? error["error"]?["message"]?.GetValue<string>() : null;
+            return JsonNode.Parse(body) as JsonObject;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static JsonObject? TryParseObject(string json)
+    {
+        try
+        {
+            return JsonNode.Parse(json) as JsonObject;
         }
         catch (JsonException)
         {

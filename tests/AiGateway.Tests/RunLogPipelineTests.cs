@@ -43,15 +43,17 @@ public class RunLogPipelineTests
         Assert.Equal(503, entry.StatusCode);
     }
 
-    // The forwarder must not be able to reach the config store at all: the entry (GatewayServer) resolves the route
-    // once and hands the result in (S11). Anything that gives the forwarder a resolver would reopen the S9 re-read window.
-    [Fact]
-    public void The_forwarder_cannot_re_read_configuration_because_it_has_none()
+    // Neither forwarder may be able to reach the config store: the entry (GatewayServer) resolves the route once and hands
+    // the result in (S11). Anything that gives a forwarder a resolver would reopen the S9 re-read window — and there are
+    // two forwarders now, so both are pinned by name.
+    [Theory]
+    [InlineData(typeof(AiGateway.Passthrough.PassthroughForwarder), "IHttpClientFactory")]
+    [InlineData(typeof(AiGateway.Translation.OpenAiTranslationForwarder), "IHttpClientFactory,AnthropicToOpenAiTranslator,OpenAiToAnthropicTranslator")]
+    public void The_forwarders_cannot_re_read_configuration_because_they_have_none(Type forwarder, string expectedDependencies)
     {
-        var parameters = typeof(AiGateway.Passthrough.PassthroughForwarder)
-            .GetConstructors().Single().GetParameters().Select(p => p.ParameterType.Name);
+        var parameters = forwarder.GetConstructors().Single().GetParameters().Select(p => p.ParameterType.Name);
 
-        Assert.Equal(["IHttpClientFactory"], parameters);
+        Assert.Equal(expectedDependencies.Split(','), parameters);
     }
 
     [Fact]
