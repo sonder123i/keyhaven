@@ -18,7 +18,7 @@ AiGateway.Tests ──► 以上全部（InternalsVisibleTo）
 | --- | --- | --- |
 | AiGateway **不引用** Security | 网关 / 鉴权 / 日志代码拿到解密能力（FORBIDDEN-06/07） | 编译期**两道独立拦截**（S1 实测）：AiGateway 目标 `net8.0` 引用 `net8.0-windows` 的 Security 直接 **NU1201**；就算改了目标框架，Security → AiGateway 已存在，反向再加一条就是 **MSB4006 循环依赖**。护栏①测试是第三道 |
 | 只有 Security 引用 ProtectedData | 有人在别处直接调 DPAPI | 编译期：包引用；AiGateway 目标 `net8.0`，就算加了包，Windows 专属 API 也会触发 CA1416（警告即错误，S1 review 实测过这条） |
-| App 看不见两个库的内部类型 | UI 直接 `new` 出保护器或注入器（FORBIDDEN-03/08） | `internal` 默认（越界即 CS0122，S1 实测）。公开面只有：AiGateway 的 `AddAiGateway()`、`GatewayServer`（宿主入口，监听地址常量在它内部，App 改不了）与 `GatewayPortInUseException`、`IRealKeyVault`（只写，给 UI）、`IProxyKeyRegistry` + `IssuedProxyKey` + `ProxyKeyFingerprint` + `ProxyKeySummary`（签发 / 只给指纹的列表 / 吊销 / 删除代理密钥，给 UI）、`IGatewaySettings` + `ProviderConfig` + `ActiveSelection` + `UpstreamKind`（上游、激活、端口，给 UI；签名里没有任何 Key，S7）、`ICiphertextStore` + `CiphertextRecord`（只存取密文，给 Security）；Security 的 `AddAiGatewaySecurity()`。**给 Security 的是公开密文端口，而不是 `InternalsVisibleTo`**——后者会让 Security 看到 AiGateway 内部的上游客户端，等于给 FORBIDDEN-09 开后门；密文端口被谁拿到都解不开（解密点只有一处，护栏②） |
+| App 看不见两个库的内部类型 | UI 直接 `new` 出保护器或注入器（FORBIDDEN-03/08） | `internal` 默认（越界即 CS0122，S1 实测）。公开面只有：AiGateway 的 `AddAiGateway()`、`GatewayServer`（宿主入口，监听地址常量在它内部，App 改不了）与 `GatewayPortInUseException`、`IRealKeyVault`（只写，给 UI）、`IProxyKeyRegistry` + `IssuedProxyKey` + `ProxyKeyFingerprint` + `ProxyKeySummary`（签发 / 只给指纹的列表 / 吊销 / 删除代理密钥，给 UI）、`IGatewaySettings` + `ProviderConfig` + `ActiveSelection` + `UpstreamKind`（上游、激活、端口，给 UI；签名里没有任何 Key，S7）、`IRunLog` + `RunLogEntry` + `RunLogOutcome`（运行日志只有 Snapshot 一个方法，记录是定长安全字段，给 UI，S9）、`ICiphertextStore` + `CiphertextRecord`（只存取密文，给 Security）；Security 的 `AddAiGatewaySecurity()`。**给 Security 的是公开密文端口，而不是 `InternalsVisibleTo`**——后者会让 Security 看到 AiGateway 内部的上游客户端，等于给 FORBIDDEN-09 开后门；密文端口被谁拿到都解不开（解密点只有一处，护栏②） |
 | 协议代码分不分程序集 | ——（入站只有一种协议，不存在两个 codec 互引） | 不拆 |
 
 第一版拆成 10 个程序集，大部分边界拦的是"两个 codec 互引""Core 反向依赖"这类在单入站下不存在的错误；代价却是实打实的：S1 骨架撞出两处程序集环（MSB4006）和一处传递引用泄露。
@@ -39,8 +39,9 @@ AiGateway.Tests ──► 以上全部（InternalsVisibleTo）
 | ⑧ | 上游返回 302 时原样把 302 交回，不跟过去，另一台主机收不到任何请求 | `x-api-key` 是自定义头，跟随重定向会把它带到别的主机。S5 红灯实测 |
 | ⑨ | 请求发出后，持有该请求对象的代码在头里找不到 `x-api-key` | 网关代码事后从请求对象读到明文。S5 红灯实测 |
 | ⑩ | 请求自带的 `x-api-key` / `Authorization`（比如误转发的代理密钥）被替换，上游只看到真实 Key | 代理密钥被转发到上游。S5 红灯实测 |
+| ⑪ | `src/AiGateway/RunLog/` 与 `RunRequestState.cs` 的源码里不出现 `Exception` / `Message`；`IRunLog` 只有 `Capacity` 与 `Snapshot`（没有写方法）；`RunLogEntry` 没有 `Key` / `Plaintext` / `Sha256` 成员；**转发器的构造函数只有 `RouteResolver` 与 `IHttpClientFactory`（拿不到配置存储）** | 有人往运行日志里塞错误文本、正文或密钥（FORBIDDEN-06），或让转发器在收尾时重读激活档、把旧请求记成新上游（S9）。红灯实测：给请求状态加一个 `LastExceptionMessage` 字段、给 `IRunLog` 加一个 `Append`、把 `ConfigStore` 拿回转发器——各自只让对应测试变红。**最后那条只有结构性断言能抓**：把重读恢复后全量跑，行为测试一条都不红（那个竞态窗口是微秒级，测试撞不上） |
 
-①②③ 是源码 / 项目文件级断言，粗糙但够用：它们守的是"出现了就一定该有人看一眼"的东西；④–⑩ 是行为级测试，⑦–⑩ 用一个真实 Kestrel 桩上游跑。ArchUnitNET 不再需要。
+①②③ 是源码 / 项目文件级断言，粗糙但够用：它们守的是"出现了就一定该有人看一眼"的东西；④–⑪ 是行为级 / 结构级测试，⑦–⑪ 里 ⑦–⑩ 用一个真实 Kestrel 桩上游跑。ArchUnitNET 不再需要。
 
 **类型护栏**（不用测试，签名本身就拦）：
 - 日志写入器只接受 `ProxyKeyFingerprint`，不接受 `string`——想塞明文就得显式构造它，review 时刺眼（FORBIDDEN-06）。**指纹 = 代理密钥 SHA-256 的前 8 位十六进制**（S4 定稿），不是明文前缀：日志和 UI 里不出现明文的任何一部分，用户靠创建时的标签认密钥。
@@ -53,6 +54,8 @@ AiGateway.Tests ──► 以上全部（InternalsVisibleTo）
 - **本机以外的上游地址必须 https**（RISK-15）：http 会让真实 Key 明文出网；只有回环地址（本机桩、本机代理）可以用 http。
 - **上游 id 由名称生成且永不改**：DPAPI 的 entropy 绑在 id 上，改名只改显示名。
 - **不可逆操作的确认框默认按钮是「否」**（RISK-16）：真 exe 实测 `DM_GETDEFID` 改前 6（「是」）、改后 7（「否」）——误按回车不会吊销密钥或删掉上游。
+- **运行日志只能被拉取**：`IRunLog` 只有 `Capacity` 与 `Snapshot()`；请求线程不引用 UI，UI 用 `DispatcherTimer` 每秒读一次快照（FORBIDDEN-04）。每请求的临时状态放在 `HttpContext.Items` 里的小对象上。
+- **一行日志的两个标签来自同一份快照**：`RouteResult` 自带 `ProviderId`（连"没激活上游 / 没存 Key"这类失败也带），转发器因此不需要配置存储，也不会在收尾时重读——这是 S9 复核时改掉的：原先写成 `state.Provider ??= store.Current.Active?.ProviderId`，注释却声称"就是解析器刚读的那份快照"，实际是第二次读，且从不使用 `route.ProviderId`。结构性断言（转发器构造函数参数）现在守着这条——实测把重读恢复后**只有它会红**，行为测试撞不上那个微秒级窗口。
 - WPF 的 GridView 行在 UI 自动化里叫 `DataItem`，可访问名称取自行对象的 `ToString()`；record 默认会把全部字段念出来，所以行记录都重写了 `ToString()`。
 
 ## 3. S1 实测留下的教训（仍然有效）

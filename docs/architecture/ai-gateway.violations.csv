@@ -1,6 +1,6 @@
 rule_id,severity,from,to,edge_type,reason,detection,confidence,note
 FORBIDDEN-03,MEDIUM,AiGateway.App（ViewModels）,AiGateway 与 AiGateway.Security 的内部类型,compile-time,UI 直接操作存储或保护器会绕开端口；明文 Key 一旦进 ViewModel 字段就难保不外泄,两个库默认 internal、各只公开注册方法与窄端口；测试反射遍历 ViewModel 对象图：保存真实 Key / 签发代理密钥后搜不到明文（扫描器先对埋了明文的对象自检）,high,2026-10-15 改写：原规则依赖 10 程序集的引用隔离；合并原 FORBIDDEN-03b 与 FORBIDDEN-08。S7 红灯实测：ViewModel 加一个留住 Key 或代理密钥明文的属性即红
-FORBIDDEN-04,MEDIUM,请求处理路径,AiGateway.App（UI）,runtime-call,请求线程回调 UI 会形成运行时环并可能与 Dispatcher 死锁,请求路径不得调用 Dispatcher.Invoke/InvokeAsync；UI 通知只走单向事件,medium,与 RISK-07 同源
+FORBIDDEN-04,MEDIUM,请求处理路径,AiGateway.App（UI）,runtime-call,请求线程回调 UI 会形成运行时环并可能与 Dispatcher 死锁,请求路径不引用 WPF（编译期就拿不到 Dispatcher）；运行日志是拉取式：IRunLog 只有 Snapshot，UI 自己每秒读一次；护栏⑪,medium,与 RISK-07 同源；S9 落地为"只拉不推"
 FORBIDDEN-05,MEDIUM,AiGateway（除配置存储外）,config.json,file-access,绕过配置存储直接读写文件会让加密字段与原子写出现两处真相,只有配置存储组件触碰该文件（代码审查）,medium,2026-10-15 改写：原为"绕过仓储直连 SQLite"
 FORBIDDEN-06,HIGH,AiGateway（运行日志）,AiGateway.Security,data-leak,日志侧一旦能拿到真实 Key，一行日志就成了外泄通道；日志只允许记代理密钥指纹,编译期：AiGateway 引不到 Security（NU1201 目标框架不兼容 + MSB4006 反向成环；S1 实测）+ 护栏① + 日志写入器只接受 ProxyKeyFingerprint 类型,high,保留
 FORBIDDEN-07,HIGH,AiGateway（代理密钥验证器）,AiGateway.Security,privilege-creep,鉴权器若能解密，401 失败路径就站在明文 Key 的可达范围内,编译期：AiGateway 引不到 Security（NU1201 + MSB4006；S1 实测）+ 护栏①,high,保留

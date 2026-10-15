@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="AI 本地代理网关" Height="620" Width="940" MinHeight="520" MinWidth="820"
+        IsVisibleChanged="OnVisibilityChanged"
         FontSize="13">
     <Window.Resources>
         <Style TargetType="Button">
@@ -48,7 +49,7 @@
             <TextBlock x:Name="StatusText" Text="{Binding StatusText}" />
         </StatusBar>
 
-        <TabControl x:Name="Tabs" Margin="12">
+        <TabControl x:Name="Tabs" Margin="12" SelectionChanged="OnTabChanged">
             <TabItem x:Name="ProvidersTab" Header="上游与 Key">
                 <Grid Margin="12">
                     <Grid.RowDefinitions>
@@ -160,6 +161,38 @@
                                    Text="代理密钥是发给 Claude Code 的、可随时吊销的访问凭证，不是你的上游 Key。明文只在生成时显示一次，这里只显示指纹。吊销立即生效且不可恢复。" />
                         <TextBlock x:Name="ProxyKeysMessage" Style="{StaticResource Message}" Text="{Binding ProxyKeys.Message}" />
                     </StackPanel>
+                </Grid>
+            </TabItem>
+
+            <TabItem x:Name="RunLogTab" Header="运行日志">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="最近请求（最新在上）。日志只在内存里，重启清空；不记录请求内容、响应内容和任何密钥，只显示指纹。"
+                                   Style="{StaticResource Hint}" Margin="0,0,12,0" VerticalAlignment="Center" />
+                        <Button x:Name="RefreshLogButton" Content="刷新" Click="OnRefreshLog" />
+                    </StackPanel>
+
+                    <ListView x:Name="RunLogList" Grid.Row="1" Margin="0,10,0,0" ItemsSource="{Binding RunLog.Rows}">
+                        <ListView.View>
+                            <GridView>
+                                <GridViewColumn Header="时间" Width="80" DisplayMemberBinding="{Binding Time}" />
+                                <GridViewColumn Header="密钥指纹" Width="100" DisplayMemberBinding="{Binding Fingerprint}" />
+                                <GridViewColumn Header="上游" Width="130" DisplayMemberBinding="{Binding Provider}" />
+                                <GridViewColumn Header="模型" Width="170" DisplayMemberBinding="{Binding Model}" />
+                                <GridViewColumn Header="状态" Width="60" DisplayMemberBinding="{Binding Status}" />
+                                <GridViewColumn Header="首字节" Width="80" DisplayMemberBinding="{Binding FirstByte}" />
+                                <GridViewColumn Header="结束原因" Width="110" DisplayMemberBinding="{Binding Outcome}" />
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
+
+                    <TextBlock x:Name="RunLogStatus" Grid.Row="2" Margin="0,8,0,0" Foreground="Gray" Text="{Binding RunLog.Status}" />
                 </Grid>
             </TabItem>
 

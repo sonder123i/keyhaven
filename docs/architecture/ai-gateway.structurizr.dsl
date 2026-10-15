@@ -23,11 +23,11 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关。M1（
                 wpfViews = component "WPF 界面" "[AiGateway.App] 顶栏一键切换 + 三个页：上游与 Key、代理密钥、设置（端口，D9）；运行日志页在 S9（D5）。真实 Key 只经 PasswordBox 交给只写端口，交完即清空；代理密钥明文只在一次性窗口里出现，旁边给出可复制的 Claude Code 配置片段；不改写用户的 settings.json。删除 / 吊销的确认框默认按钮是「否」。" "XAML" {
                     tags "App"
                 }
-                viewModels = component "ViewModels" "[AiGateway.App] 只经公开端口操作：IGatewaySettings（上游、激活、端口；本机以外的上游地址必须 https）、IRealKeyVault（只写）、IProxyKeyRegistry（签发、只给指纹的列表、吊销、删除）；日志读取在 S9。不持有任何 Key 字符串（反射扫描对象图的测试守住）。" "手写 INotifyPropertyChanged，无 MVVM 库" {
+                viewModels = component "ViewModels" "[AiGateway.App] 只经公开端口操作：IGatewaySettings（上游、激活、端口；本机以外的上游地址必须 https）、IRealKeyVault（只写）、IProxyKeyRegistry（签发、只给指纹的列表、吊销、删除）；日志页只读、可见时 1 秒轮询（请求线程从不回调 UI）。不持有任何 Key 字符串（反射扫描对象图的测试守住）。" "手写 INotifyPropertyChanged，无 MVVM 库" {
                     tags "App"
                 }
 
-                httpEndpoints = component "本地 HTTP 入口" "[AiGateway] POST /v1/messages（含 ?beta=true 查询串）、POST /v1/messages/count_tokens、GET /health。地址写死 127.0.0.1，只有端口可改（D9）。" "ASP.NET Core Minimal API" {
+                httpEndpoints = component "本地 HTTP 入口" "[AiGateway] POST /v1/messages（含 ?beta=true 查询串）、POST /v1/messages/count_tokens、GET /health。地址写死 127.0.0.1，只有端口可改（D9）。最外层是统一收尾中间件：每个请求结束时给运行日志追加恰好一行。" "ASP.NET Core Minimal API" {
                     tags "Lib"
                 }
                 proxyKeyAuthenticator = component "代理密钥验证器" "[AiGateway] 从 x-api-key 或 Authorization: Bearer 取代理密钥，SHA-256 后与已启用哈希的内存快照做 FixedTimeEquals（D8/D10）。快照随配置写入整体替换，吊销即刻生效，不每请求读盘。失败回 Anthropic 形状 401，并带 x-should-retry: false（被吊销的密钥不会自己变好）。" "SHA-256 + FixedTimeEquals" {
@@ -54,7 +54,7 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关。M1（
                 configStore = component "配置存储" "[AiGateway] 读写 config.json：Provider 元数据、Key 密文（含 protector_id / key_version）、代理密钥哈希（含 algo_version / enabled）、激活档、端口。原子写；启动时读一次，之后以内存快照为准。" "System.Text.Json" {
                     tags "Lib"
                 }
-                runLog = component "运行日志" "[AiGateway] 内存环形缓冲，一行一请求：时间、代理密钥指纹、上游、模型、状态、首字节耗时、中止原因。重启清空。不含请求体、响应内容、任何密钥明文。" "内存环形缓冲" {
+                runLog = component "运行日志" "[AiGateway] 内存环形缓冲，上限 500 行、最新在前，重启清空。一行一请求，由唯一的收尾中间件追加（成功 / 401 / 404 / 中止 / 异常各一行，/health 不记）：请求时间、代理密钥指纹、本请求解析到的上游与模型（路由结果自带 provider id，转发器拿不到配置存储、收尾时不重读）、状态（客户端没看到就是未知，不伪造）、首个上游响应体字节的耗时、结束原因。记录是定长字段，没有装错误文本或正文的地方。" "内存环形缓冲" {
                     tags "Lib"
                 }
 
@@ -92,7 +92,7 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关。M1（
         gateway.appExe.viewModels -> gateway.appExe.configStore "经 IGatewaySettings / IProxyKeyRegistry：增删改上游（删除连带删密文）与端口；签发代理密钥只写入其 SHA-256" "in-process"
         gateway.appExe.viewModels -> gateway.appExe.secretProtector "保存 / 删除真实 Key：只写端口 IRealKeyVault，签名上不可读回" "in-process"
         gateway.appExe.viewModels -> gateway.appExe.activationState "一键切换：IGatewaySettings.Activate 整体替换配置快照；没存 Key 的上游拒绝激活" "in-process"
-        gateway.appExe.viewModels -> gateway.appExe.runLog "只读最近若干行（S9）" "in-process"
+        gateway.appExe.viewModels -> gateway.appExe.runLog "IRunLog.Snapshot() 定时拉取，唯一方法是拉取，没有写入口" "in-process"
 
         gateway.appExe.httpEndpoints -> gateway.appExe.proxyKeyAuthenticator "/v1/* 先鉴权（/health 除外）" "in-process"
         gateway.appExe.proxyKeyAuthenticator -> gateway.appExe.configStore "读已启用代理密钥哈希的内存快照（写入即替换）" "in-process"

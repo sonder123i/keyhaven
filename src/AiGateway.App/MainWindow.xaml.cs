@@ -1,4 +1,6 @@
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Threading;
 using AiGateway.App.ViewModels;
 
 namespace AiGateway.App;
@@ -6,11 +8,36 @@ namespace AiGateway.App;
 public partial class MainWindow : Window
 {
     private readonly MainViewModel _vm;
+    private readonly DispatcherTimer _logTimer;
 
     internal MainWindow(MainViewModel vm)
     {
         InitializeComponent();
         DataContext = _vm = vm;
+        _vm.RunLog.Refresh();
+
+        // Poll while the log tab is on screen; the request path never pushes into the UI (FORBIDDEN-04).
+        _logTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _logTimer.Tick += (_, _) => { if (IsVisible && Tabs.SelectedItem == RunLogTab) _vm.RunLog.Refresh(); };
+        _logTimer.Start();
+    }
+
+    private void OnRefreshLog(object sender, RoutedEventArgs e) => _vm.RunLog.Refresh();
+
+    private void OnTabChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (Tabs.SelectedItem == RunLogTab)
+        {
+            _vm.RunLog.Refresh();
+        }
+    }
+
+    private void OnVisibilityChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if ((bool)e.NewValue && Tabs.SelectedItem == RunLogTab)
+        {
+            _vm.RunLog.Refresh();
+        }
     }
 
     private void OnActivate(object sender, RoutedEventArgs e) => _vm.Activation.Activate();

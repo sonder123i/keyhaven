@@ -6,20 +6,25 @@ namespace AiGateway.ProxyKeys;
 
 internal sealed class ProxyKeyAuthenticator(ConfigStore store)
 {
-    public bool IsAuthorized(string? presentedKey)
+    // Returns the matched key's fingerprint (S9: the run log needs it and nothing else), or null.
+    // The loop never exits early: every enabled record is compared, so no timing signal leaks which one matched.
+    public ProxyKeyFingerprint? Authorize(string? presentedKey)
     {
         if (string.IsNullOrEmpty(presentedKey))
         {
-            return false;
+            return null;
         }
 
         var presented = ProxyKeyHasher.Hash(presentedKey);
-        var matched = false;
+        ProxyKeyFingerprint? matched = null;
         foreach (var key in store.Current.ProxyKeys)
         {
             if (key.Enabled && key.AlgoVersion == ProxyKeyHasher.AlgoVersion)
             {
-                matched |= CryptographicOperations.FixedTimeEquals(presented, Convert.FromHexString(key.Sha256));
+                if (CryptographicOperations.FixedTimeEquals(presented, Convert.FromHexString(key.Sha256)))
+                {
+                    matched = new ProxyKeyFingerprint(key.Sha256);
+                }
             }
         }
 

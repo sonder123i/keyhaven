@@ -2,6 +2,7 @@ using System.Net;
 using AiGateway.Configuration;
 using AiGateway.Passthrough;
 using AiGateway.ProxyKeys;
+using AiGateway.RunLog;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Hosting;
@@ -44,6 +45,7 @@ public sealed class GatewayServer : IAsyncDisposable
         configureServices?.Invoke(builder.Services);
 
         var app = builder.Build();
+        app.Use(ObserveRun);
         app.Use(RequireProxyKey);
         app.MapGet(HealthPath, () => Results.Ok(new { status = "ok" }));
         app.MapPost("/v1/messages", Forward);
@@ -64,7 +66,7 @@ public sealed class GatewayServer : IAsyncDisposable
         }
 
         var authenticator = context.RequestServices.GetRequiredService<ProxyKeyAuthenticator>();
-        if (!authenticator.IsAuthorized(ProxyKeyAuthenticator.ReadPresentedKey(context.Request)))
+        if (authenticator.Authorize(ProxyKeyAuthenticator.ReadPresentedKey(context.Request)) is not { } fingerprint)
         {
             // Claude Code retries 401 for about three minutes too; a revoked key never becomes valid again.
             context.Response.Headers["x-should-retry"] = "false";
@@ -74,7 +76,45 @@ public sealed class GatewayServer : IAsyncDisposable
             return;
         }
 
+        RunRequestState.For(context)!.Fingerprint = fingerprint;
         await next(context);
+    }
+
+    // The single place a request ends: success, rejection, 404, abort or crash all produce exactly one run-log line.
+    private static async Task ObserveRun(HttpContext context, RequestDelegate next)
+    {
+        if (context.Request.Path == HealthPath)
+        {
+            await next(context);
+            return;
+        }
+
+        var started = DateTimeOffset.UtcNow;
+        var state = RunRequestState.For(context)!;
+        var outcome = RunLogOutcome.Completed;
+        try
+        {
+            await next(context);
+        }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        {
+            outcome = RunLogOutcome.ClientAborted;
+            throw;
+        }
+        catch
+        {
+            outcome = RunLogOutcome.UnhandledError;
+            throw;
+        }
+        finally
+        {
+            // A status the client could never have seen (headers not sent, still the default 200) is recorded as unknown.
+            var status = context.Response.HasStarted || context.Response.StatusCode != StatusCodes.Status200OK
+                ? context.Response.StatusCode
+                : (int?)null;
+            context.RequestServices.GetRequiredService<RunLogRing>().Append(
+                new RunLogEntry(started, state.Fingerprint, state.Provider, state.Model, status, state.FirstByte, state.Outcome ?? outcome));
+        }
     }
 
     public async Task StartAsync(CancellationToken cancellationToken = default)

@@ -2,6 +2,7 @@ using AiGateway.Configuration;
 using AiGateway.Passthrough;
 using AiGateway.ProxyKeys;
 using AiGateway.Routing;
+using AiGateway.RunLog;
 using AiGateway.Secrets;
 using AiGateway.Settings;
 using AiGateway.Upstream;
@@ -29,6 +30,8 @@ public static class AiGatewayServiceCollectionExtensions
         services.AddSingleton<ProxyKeyAuthenticator>();
         services.AddSingleton<IProxyKeyRegistry, ProxyKeyRegistry>();
         services.AddSingleton<RouteResolver>();
+        services.AddSingleton<RunLogRing>();
+        services.AddSingleton<IRunLog>(sp => sp.GetRequiredService<RunLogRing>());
         services.AddSingleton<PassthroughForwarder>();
         services.AddSingleton<IGatewaySettings, GatewaySettings>();
 

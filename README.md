@@ -18,13 +18,13 @@ C# / .NET 8 WPF 桌面应用。Claude Code 把 `ANTHROPIC_BASE_URL` 指向本机
 | --- | --- |
 | 1–3 探索 / 澄清 / 架构 | ✅ **2026-10-15 review 后重写**（第一版出自上一个模型；为什么改见下文与 `evidence.md` §2） |
 | 4 实现计划 | ✅ **13 个故事**：`docs/plan/ai-gateway.implementation-plan.json`。M1 = S1–S8（DeepSeek 直通可用），M2 = S11–S12（OpenAI 翻译） |
-| 5 编码 | 🟢 **M1 达成：S1–S8 完成（2026-10-15）**。真 Claude Code 2.1.300 经网关直通 DeepSeek：对话、工具调用、thinking、图片、中止、一键切换、吊销后立即 401 全部实测通过（记录：`evidence.md` §7）。已有：3 + 1 个项目；`config.json` + DPAPI 只写密钥库；只监听 `127.0.0.1` 的宿主（单实例、托盘常驻）；代理密钥（签发 / 鉴权 / 即刻吊销）；真实 Key 注入（不跟随重定向、零日志、发完即删）；直通转发（只改 `model`、头白名单、真流式、中止传播）；最小 UI（上游与 Key / 代理密钥 / 设置 + 顶栏一键切换）。S8 实测发现 Claude Code 对 5xx 与 401 会重试约 3 分钟，已让网关的配置类错误带 `x-should-retry: false`（RISK-17）。93 个测试全绿。**下一步 = S9**（运行日志页） |
+| 5 编码 | 🟢 **M1 达成，S1–S9 完成（2026-10-15）**。真 Claude Code 2.1.300 经网关直通 DeepSeek：对话、工具调用、thinking、图片、中止、一键切换、吊销后立即 401 全部实测通过（记录：`evidence.md` §7）。已有：3 + 1 个项目；`config.json` + DPAPI 只写密钥库；只监听 `127.0.0.1` 的宿主（单实例、托盘常驻）；代理密钥（签发 / 鉴权 / 即刻吊销）；真实 Key 注入（不跟随重定向、零日志、发完即删）；直通转发（只改 `model`、头白名单、真流式、中止传播）；最小 UI（上游与 Key / 代理密钥 / 运行日志 / 设置 + 顶栏一键切换）；**运行日志**：内存里最多 500 行，一行一请求（时间、密钥指纹、上游、模型、状态、首字节、结束原因），由唯一的收尾中间件写，UI 只拉取，重启清空。S8 发现 Claude Code 对 5xx 与 401 会重试约 3 分钟，已让配置类错误带 `x-should-retry: false`（RISK-17）。109 个测试全绿。**下一步 = S10**（发布形态：依赖框架 vs 自包含，数字出来你选） |
 
 ## 先读这些（按顺序）
 
 1. `docs/architecture/ai-gateway.architecture-understanding.md` —— 决策 D1–D14、不做清单、外部事实（带网址）、两条脊柱、安全梯子。
 2. `docs/architecture/ai-gateway.structurizr.dsl` —— 真相源，L1/L2/L3 三视图，15 个组件。**已用 Structurizr CLI 解析通过**。
-3. `docs/architecture/ai-gateway.dependency-impact-findings.md` —— 为什么是 3 + 1 个项目、十条护栏、S1 实测教训、两扇后门、UI 层的守法、变更影响。
+3. `docs/architecture/ai-gateway.dependency-impact-findings.md` —— 为什么是 3 + 1 个项目、十一条护栏、S1 实测教训、两扇后门、UI 层的守法、变更影响。
 4. `docs/architecture/ai-gateway.request-flow.dot` —— 一次请求：鉴权 → 路由 → 直通 / 翻译 → 注入 → 上游。
 5. `docs/architecture/ai-gateway.dependencies.dot` —— 程序集引用、运行时装配、禁止边。
 6. `docs/architecture/ai-gateway.evidence.md` —— 每条决策出自谁、哪一轮；外部证据出处。**别把我的推断当成你的决定。**

@@ -4,6 +4,7 @@ using AiGateway.App;
 using AiGateway.App.ViewModels;
 using AiGateway.Configuration;
 using AiGateway.ProxyKeys;
+using AiGateway.RunLog;
 using AiGateway.Secrets;
 using AiGateway.Security;
 using AiGateway.Settings;
@@ -198,6 +199,25 @@ public sealed class ViewModelTests : IDisposable
 
         Assert.Equal("http://127.0.0.1:8000", json["ANTHROPIC_BASE_URL"]!.GetValue<string>());
         Assert.Equal("sk-aigw-abc", json["ANTHROPIC_AUTH_TOKEN"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void The_run_log_page_shows_fingerprint_and_outcome_but_never_a_key()
+    {
+        var issued = _services.GetRequiredService<IProxyKeyRegistry>().Create("笔记本");
+        var ring = new RunLogRing();
+        ring.Append(new RunLogEntry(
+            DateTimeOffset.UtcNow, issued.Fingerprint, "deepseek", "deepseek-chat", 200,
+            TimeSpan.FromMilliseconds(900), RunLogOutcome.ClientAborted));
+        var vm = new RunLogViewModel(ring);
+
+        vm.Refresh();
+
+        var row = Assert.Single(vm.Rows);
+        Assert.Equal((issued.Fingerprint.Value, "deepseek", "deepseek-chat", "200", "900ms", "客户端中止"),
+            (row.Fingerprint, row.Provider, row.Model, row.Status, row.FirstByte, row.Outcome));
+        Assert.DoesNotContain(issued.Plaintext, string.Join('|', vm.Rows.Select(r => r.ToString())));
+        Assert.False(Retains(vm, issued.Plaintext));
     }
 
     [Theory]
