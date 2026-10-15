@@ -71,4 +71,4 @@ C# / .NET 8 WPF 桌面应用。Claude Code 把 `ANTHROPIC_BASE_URL` 指向本机
 - 交互式会话（Esc / Ctrl+C 中止、长会话的上下文压缩）没有自动化覆盖——S8 只能用 `-p` 模式跑，需要你自己用一次。
 - 仓库原定 M1 跑通后再考虑公开；M1 已达成，公不公开、什么时候公开由你定（目前仍是 private）。
 - **OpenAI 上游怎么填**：类型选「OpenAI」、地址填 API 根（网关在其后追加 `/chat/completions`；例如 DeepSeek 填 `https://api.deepseek.com`，OpenAI 填 `https://api.openai.com/v1`）；真实 Key 以 `Authorization: Bearer` 注入，不是 `x-api-key`。
-- **真机联调要你自己跑一次（M2 的唯一未验项）**：S11/S12 的验收口径是 fixture + 桩上游，**翻译路径还没接过真上游、也没接过真 Claude Code**。我把会话安全策略能做的都做了，唯独两件事做不了，都得你出手：① 拿真实 Key 发外部请求被本会话策略拦下（内联进命令与写进临时文件都拦），所以我录不到「真实分片流」——S12 的 golden fixture 是按 OpenAI 官方 wire 格式手写的，不是录制的；② `git push` 也被拦（即使你在弹窗里点了「Push now」）。要收口 M2：给这个上游配好真 Key、类型选 OpenAI、按上面填写地址，然后用 Claude Code 跑一次读写文件（工具调用），把结果告诉我，我据此更新验收记录。
+- **真机联调要你自己跑一次（M2 的唯一未验项）**：S11/S12 的验收口径是 fixture + 桩上游，**翻译路径还没接过真上游、也没接过真 Claude Code**。我这边做不了的只剩一件：拿真实 Key 发外部请求被本会话策略拦下（内联进命令与写进临时文件都拦），所以我录不到「真实分片流」——S12 的 golden fixture 是按 OpenAI 官方 wire 格式手写的，不是录制的。要收口 M2：配好真 Key、类型选 OpenAI、按上面填写地址，然后用 Claude Code 跑一次读写文件（工具调用），把结果告诉我，我据此更新验收记录。
