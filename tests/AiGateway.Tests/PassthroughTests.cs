@@ -32,10 +32,14 @@ internal sealed class GatewayHarness : IAsyncDisposable
     {
         var harness = new GatewayHarness(await StubUpstream.StartAsync(upstreamResponds));
         var config = harness._dir.File("config.json");
+        // Anthropic upstreams keep the /anthropic suffix and get /v1/messages appended; OpenAI ones append /chat/completions.
+        var baseUrl = kind == "open_ai"
+            ? harness.Upstream.BaseAddress.ToString().TrimEnd('/')
+            : harness.Upstream.BaseAddress + "anthropic";
         File.WriteAllText(config, $$"""
             {
               "port": 0,
-              "providers": [ { "id": "deepseek", "name": "DeepSeek", "kind": "{{kind}}", "base_url": "{{harness.Upstream.BaseAddress}}anthropic", "models": ["deepseek-chat"] } ],
+              "providers": [ { "id": "deepseek", "name": "DeepSeek", "kind": "{{kind}}", "base_url": "{{baseUrl}}", "models": ["deepseek-chat"] } ],
               "active": { "provider_id": "deepseek", "model": "deepseek-chat" }
             }
             """);
@@ -274,18 +278,6 @@ public class PassthroughTests
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.Equal("api_error", (await ReadError(response)).Type);
-        Assert.Equal("false", ShouldRetry(response));
-        Assert.Empty(gw.Upstream.Requests);
-    }
-
-    [Fact]
-    public async Task OpenAI_style_upstream_is_refused_until_translation_exists()
-    {
-        await using var gw = await GatewayHarness.StartAsync(kind: "open_ai");
-
-        using var response = await gw.Client.SendAsync(gw.Messages(Body));
-
-        Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode);
         Assert.Equal("false", ShouldRetry(response));
         Assert.Empty(gw.Upstream.Requests);
     }

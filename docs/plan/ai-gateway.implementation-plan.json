@@ -196,10 +196,10 @@
         "golden fixture 测试"
       ],
       "executionFit": "fits-one-run",
-      "demoBoundary": "fixture：一个带工具定义的 Anthropic 请求翻译成合法的 chat/completions 请求，非流式响应翻译回合法 Anthropic message",
-      "scopeNotes": "只对 OpenAI 上游生效；Anthropic 兼容上游永远走直通。",
+      "demoBoundary": "已于 2026-10-15 完成（fixture + 桩上游，130 测试全绿）：带工具定义的 Anthropic 请求译成合法 chat/completions 请求；非流式响应译回合法 Anthropic message；HTTP 上真实 Key 以 Authorization: Bearer 到达、anthropic-* 头不转发；count_tokens 404；流式 501。红灯 6 组（各自只让对应测试红）：① 去掉 bearer 分支 → 2 条 bearer 测试；② 去掉 stream_options.include_usage → Streaming_asks_for_usage…；③ 把 thinking 抄进上游请求 → Anthropic_only_fields_never_reach_the_upstream；④ 去掉 count_tokens 404 → Count_tokens…is_404…；⑤ 入口不再分派（OpenAI 也走直通）→ 5 条 OpenAI 端到端测试；⑥ 把 RouteResolver 加回转发器构造函数 → 只有护栏⑪那条结构性断言（行为测试撞不上，与 S9 同）。未覆盖：真 OpenAI 协议上游的端到端（含真 Claude Code 调工具）属 S12。",
+      "scopeNotes": "只对 OpenAI 上游生效；Anthropic 兼容上游永远走直通。实现期我做的判断，可推翻：① **分派移到入口**：GatewayServer.Forward 解析一次、按上游类型把 RouteResult 传给直通或翻译器，于是 PassthroughForwarder 的构造函数从 (RouteResolver, IHttpClientFactory) 收紧为 (IHttpClientFactory)——DSL 本来就画 httpEndpoints→routeResolver、没有 passthroughForwarder→routeResolver，这条改的是代码去贴合真相源；护栏⑪的断言随之收紧，已记入 findings §2。② 上游错误体重包成 Anthropic 形状（客户端只认 Anthropic 错误体，否则 S8 那条 3 分钟重试会重演）。③ OpenAI 上游的 BaseUrl 约定为「API 根，网关追加 /chat/completions」。④ 流式请求先回 501（带 x-should-retry:false），留给 S12。",
       "blockedBy": ["S6"],
-      "techGuidance": null
+      "techGuidance": "System.Text.Json.Nodes 的数字类型要留神：JsonNode.Parse 来的整数是 JsonValue<JsonElement>，而翻译器里显式 Create 出来的是 JsonValue<long>，测试用 GetValue<int>() 取后者会抛 InvalidOperationException（S11 实测踩到）。另外，一个已有父节点的 JsonNode 不能直接赋给另一个 JsonObject（\"node already has a parent\"），要么 DeepClone 要么取标量值。"
     },
     {
       "id": "S12",

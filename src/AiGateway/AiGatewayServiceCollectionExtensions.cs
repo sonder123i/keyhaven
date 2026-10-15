@@ -5,6 +5,7 @@ using AiGateway.Routing;
 using AiGateway.RunLog;
 using AiGateway.Secrets;
 using AiGateway.Settings;
+using AiGateway.Translation;
 using AiGateway.Upstream;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -33,6 +34,9 @@ public static class AiGatewayServiceCollectionExtensions
         services.AddSingleton<RunLogRing>();
         services.AddSingleton<IRunLog>(sp => sp.GetRequiredService<RunLogRing>());
         services.AddSingleton<PassthroughForwarder>();
+        services.AddSingleton<AnthropicToOpenAiTranslator>();
+        services.AddSingleton<OpenAiToAnthropicTranslator>();
+        services.AddSingleton<OpenAiTranslationForwarder>();
         services.AddSingleton<IGatewaySettings, GatewaySettings>();
 
         // Never follow redirects: a redirect to another host would carry the injected x-api-key header there.

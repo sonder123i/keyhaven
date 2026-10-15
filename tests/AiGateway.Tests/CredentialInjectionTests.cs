@@ -77,6 +77,21 @@ public sealed class CredentialInjectionTests(ITestOutputHelper output) : IAsyncL
     }
 
     [Fact]
+    public async Task An_OpenAI_side_request_gets_the_key_as_a_bearer_token_and_loses_it_afterward()
+    {
+        var request = NewRequest(Messages);
+        request.Options.Set(UpstreamRequest.BearerAuth, true);
+
+        using var _ = await UpstreamClient.SendAsync(request);
+
+        var seen = Assert.Single(_upstream.Requests).Headers;
+        Assert.Equal($"Bearer {RealKey}", seen["Authorization"]);
+        Assert.False(seen.ContainsKey("x-api-key"));
+        Assert.False(request.Headers.Contains("Authorization"));
+        Assert.DoesNotContain(RealKey, request.ToString());
+    }
+
+    [Fact]
     public async Task Whoever_holds_the_request_cannot_read_the_key_after_sending()
     {
         var request = NewRequest(Messages);

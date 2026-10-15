@@ -6,7 +6,6 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Diagnostics;
-using AiGateway.Configuration;
 using AiGateway.Hosting;
 using AiGateway.Routing;
 using AiGateway.RunLog;
@@ -16,7 +15,7 @@ using Microsoft.Extensions.Primitives;
 
 namespace AiGateway.Passthrough;
 
-internal sealed class PassthroughForwarder(RouteResolver resolver, IHttpClientFactory clients)
+internal sealed class PassthroughForwarder(IHttpClientFactory clients)
 {
     private static readonly Stopwatch Clock = Stopwatch.StartNew();
 
@@ -25,12 +24,11 @@ internal sealed class PassthroughForwarder(RouteResolver resolver, IHttpClientFa
 
     private static readonly string[] ForwardedResponseHeaders = ["content-type", "retry-after", "request-id", "x-should-retry"];
 
-    public async Task ForwardAsync(HttpContext context)
+    public async Task ForwardAsync(HttpContext context, RouteResult resolved)
     {
         var aborted = context.RequestAborted;
         var state = RunRequestState.For(context)!;
 
-        var resolved = resolver.Resolve();
         // Both labels come from the one snapshot routing used, so a switch mid-request cannot relabel this line.
         state.Provider = resolved.ProviderId;
         if (resolved.Route is not { } route)
@@ -41,12 +39,6 @@ internal sealed class PassthroughForwarder(RouteResolver resolver, IHttpClientFa
         }
 
         state.Model = route.Model;
-        if (route.Kind != UpstreamKind.Anthropic)
-        {
-            Mark(context, RunLogOutcome.Completed);
-            await Fail(context, StatusCodes.Status501NotImplemented, "api_error", "Upstreams that only speak the OpenAI protocol are not supported yet.");
-            return;
-        }
 
         var body = await ReadJsonObject(context.Request, aborted);
         if (body is null)

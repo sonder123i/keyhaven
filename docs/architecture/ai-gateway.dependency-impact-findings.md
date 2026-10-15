@@ -39,7 +39,7 @@ AiGateway.Tests ──► 以上全部（InternalsVisibleTo）
 | ⑧ | 上游返回 302 时原样把 302 交回，不跟过去，另一台主机收不到任何请求 | `x-api-key` 是自定义头，跟随重定向会把它带到别的主机。S5 红灯实测 |
 | ⑨ | 请求发出后，持有该请求对象的代码在头里找不到 `x-api-key` | 网关代码事后从请求对象读到明文。S5 红灯实测 |
 | ⑩ | 请求自带的 `x-api-key` / `Authorization`（比如误转发的代理密钥）被替换，上游只看到真实 Key | 代理密钥被转发到上游。S5 红灯实测 |
-| ⑪ | `src/AiGateway/RunLog/` 与 `RunRequestState.cs` 的源码里不出现 `Exception` / `Message`；`IRunLog` 只有 `Capacity` 与 `Snapshot`（没有写方法）；`RunLogEntry` 没有 `Key` / `Plaintext` / `Sha256` 成员；**转发器的构造函数只有 `RouteResolver` 与 `IHttpClientFactory`（拿不到配置存储）** | 有人往运行日志里塞错误文本、正文或密钥（FORBIDDEN-06），或让转发器在收尾时重读激活档、把旧请求记成新上游（S9）。红灯实测：给请求状态加一个 `LastExceptionMessage` 字段、给 `IRunLog` 加一个 `Append`、把 `ConfigStore` 拿回转发器——各自只让对应测试变红。**最后那条只有结构性断言能抓**：把重读恢复后全量跑，行为测试一条都不红（那个竞态窗口是微秒级，测试撞不上） |
+| ⑪ | `src/AiGateway/RunLog/` 与 `RunRequestState.cs` 的源码里不出现 `Exception` / `Message`；`IRunLog` 只有 `Capacity` 与 `Snapshot`（没有写方法）；`RunLogEntry` 没有 `Key` / `Plaintext` / `Sha256` 成员；**转发器的构造函数只拿到 `IHttpClientFactory`——既不持有 `RouteResolver` 也不持有配置存储，路由结果由入口解析一次后传进来（S11 收紧）** | 有人往运行日志里塞错误文本、正文或密钥（FORBIDDEN-06），或让转发器在收尾时重读激活档、把旧请求记成新上游（S9）。红灯实测：给请求状态加一个 `LastExceptionMessage` 字段、给 `IRunLog` 加一个 `Append`、把 `ConfigStore` 拿回转发器——各自只让对应测试变红。**最后那条只有结构性断言能抓**：把重读恢复后全量跑，行为测试一条都不红（那个竞态窗口是微秒级，测试撞不上）。**S11 复核**：原断言是 `["RouteResolver", "IHttpClientFactory"]`；S11 把分派移到入口（DSL 本来就画 `httpEndpoints -> routeResolver`、没有 `passthroughForwarder -> routeResolver` 这条边），转发器改为接收入口解析好的 `RouteResult`，于是它连解析器都拿不到了——断言收紧成 `["IHttpClientFactory"]`，与测试名"because it has none"字面一致。红灯实测：把 `RouteResolver` 加回构造函数（哪怕只是丢弃调用）→ 只有这条结构性断言变红 |
 
 ①②③ 是源码 / 项目文件级断言，粗糙但够用：它们守的是"出现了就一定该有人看一眼"的东西；④–⑪ 是行为级 / 结构级测试，⑦–⑪ 里 ⑦–⑩ 用一个真实 Kestrel 桩上游跑。ArchUnitNET 不再需要。
 
@@ -112,9 +112,16 @@ H 的收益：没有任何代码能调用注入器；上游客户端不经手明
    - 请求体用 `JsonNode` 只改 `model`，测试用 JSON 深度比较证明其余字段（含 `thinking`、`cache_control`、中文）语义不变；红灯：顺手删掉 `thinking`（旧版规范模型的做法）即红。
    - **真正致命的是缓冲，不是漏 flush**：红灯实测里去掉显式 `FlushAsync` 仍然全绿（Kestrel 每次 `WriteAsync` 自己就 flush）；而"先读完整个响应再写"或用默认的 `ResponseContentRead`，流式与中止两条测试**同时**变红。显式 flush 保留作双保险。
    - 客户端中止 → 上游请求被取消（进程外演示：1.2 秒掐断，上游在同一时刻收到取消）；上游客户端无超时（默认 100 秒会掐断长回答）。
-   - 失败映射：无激活 → 503；OpenAI 上游 → 501（M2）；请求体不是 JSON 对象 → 400；上游连不上 → 502；**存的 Key 在当前 Windows 账户下解不开 → 503 并提示重新录入**（RISK-01 的用户可见面）；上游自己的 4xx/5xx 连同 `retry-after` 原样透传。
+   - 失败映射：无激活 → 503；请求体不是 JSON 对象 → 400；上游连不上 → 502；**存的 Key 在当前 Windows 账户下解不开 → 503 并提示重新录入**（RISK-01 的用户可见面）；上游自己的 4xx/5xx 连同 `retry-after` 原样透传。（S11 起这条路径不再见到 OpenAI 上游——入口按类型分派，OpenAI 走翻译器；"OpenAI 上游 501" 从直通里删掉了，改由翻译器对流式请求回 501，见下）
    - **S8 真客户端补的一条**：Claude Code 对 5xx 与 401 会重试约 3 分钟（10 次）才显示错误。所以网关自己产生的配置类错误（503 / 501 / 400）与代理密钥 401 都带 `x-should-retry: false`；上游 401 没给提示时补上 `false`；上游自己的提示原样透传；只有"上游不可达"的 502 保持可重试。修复前没激活上游要等 174 秒，修复后 3 秒（RISK-17）。
 2. **工具调用增量重编码**（M2）：OpenAI `tool_calls` 是扁平分片（`index` 定位、首片带 `id`+`name`、后续只追加 `arguments`、没有结束标记）；Anthropic 要求显式块生命周期（`content_block_start` → N × `input_json_delta` → `content_block_stop`）。必须凭空构造块边界：何时敢发 start（等 name 到齐）、文本块与多个并行工具块的索引如何共存、收尾时未完成的 JSON 怎么办。这是"一种协议没有、另一种强制要求"的信息，不是接口不匹配。
+   **S11 落地（只做请求方向 + 非流式）**：
+   - **分派在入口**：`GatewayServer.Forward` 调 `RouteResolver.Resolve()` 一次，按 `RouteKind` 交给直通或翻译器，并把这份 `RouteResult` 原样传下去（护栏⑪因此收紧，见 §2）。
+   - **请求翻译**（`AnthropicToOpenAiTranslator`）：`system`（字符串或文本块数组）→ 一条 system 消息；`messages` 里 user 的文本 / 图片 → `text` / `image_url`（base64 → `data:` URL）；assistant 的 `tool_use` → 该条 assistant 消息的 `tool_calls`（`input` 序列化成 JSON 字符串）；user 的 `tool_result` → 独立的 `role:"tool"` 消息；`tools` → `{type:function,function:{name,description,parameters}}`；`tool_choice` 的 `auto/any/none/tool` → `auto/required/none/{function}`；`stop_sequences`→`stop`；`max_tokens`/`temperature`/`top_p` 原样搬。**`stream:true` 时补 `stream_options.include_usage`**（RISK-03）；thinking / cache_control / metadata 全部丢弃（D4）。
+   - **响应翻译**（`OpenAiToAnthropicTranslator`，仅非流式）：`choices[0].message` → Anthropic message；`content` → 文本块，`tool_calls` → `tool_use` 块（`arguments` 反序列化成 `input`，坏 JSON 退化成 `{}`，不崩）；`finish_reason` → `stop_reason`（`stop`→`end_turn`、`length`→`max_tokens`、`tool_calls`→`tool_use`）；`usage.prompt/completion_tokens` → `input/output_tokens`。上游 4xx/5xx 的错误体是 OpenAI 形状，客户端只认 Anthropic 形状，所以按状态码重包一层（401→`authentication_error` 等）。
+   - **分工边界**：翻译路径上 `count_tokens` 直接 404（RISK-04：客户端自行按字符估算）；流式请求回 501 + `x-should-retry:false`（留给 S12）；上游是 OpenAI 时 Key 以 `Authorization: Bearer` 注入（`UpstreamRequest.BearerAuth` 请求选项，注入处理器仍是一处解密点）。
+   - **红灯 5 组**（各自只让对应测试红）：去掉 bearer 分支 → 2 条 bearer 测试；去掉 `stream_options` → `Streaming_asks_for_usage…`；把 `thinking` 抄进上游请求 → `Anthropic_only_fields_never_reach_the_upstream`；去掉 `count_tokens` 404 → `Count_tokens…is_404…`；入口不再分派（OpenAI 也走直通）→ 5 条 OpenAI 端到端测试；把 `RouteResolver` 加回转发器构造函数 → 只有护栏⑪那条结构性断言。
+   - **未覆盖**：真 OpenAI 协议上游的端到端（含真 Claude Code 调工具）属 S12 验收；S11 只以 fixture + 桩上游验收。
 
 ## 7. 尚未闭环
 

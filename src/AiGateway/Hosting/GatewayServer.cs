@@ -2,7 +2,9 @@ using System.Net;
 using AiGateway.Configuration;
 using AiGateway.Passthrough;
 using AiGateway.ProxyKeys;
+using AiGateway.Routing;
 using AiGateway.RunLog;
+using AiGateway.Translation;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Hosting;
@@ -54,8 +56,16 @@ public sealed class GatewayServer : IAsyncDisposable
         return new GatewayServer(app, port);
     }
 
-    private static Task Forward(HttpContext context) =>
-        context.RequestServices.GetRequiredService<PassthroughForwarder>().ForwardAsync(context);
+    // The entry owns routing (the DSL draws httpEndpoints -> routeResolver): resolve once, then hand the very same
+    // result to whichever forwarder runs, so no forwarder needs the config store and no request is routed twice.
+    private static Task Forward(HttpContext context)
+    {
+        var services = context.RequestServices;
+        var resolved = services.GetRequiredService<RouteResolver>().Resolve();
+        return resolved.Route is { Kind: UpstreamKind.OpenAI }
+            ? services.GetRequiredService<OpenAiTranslationForwarder>().ForwardAsync(context, resolved)
+            : services.GetRequiredService<PassthroughForwarder>().ForwardAsync(context, resolved);
+    }
 
     private static async Task RequireProxyKey(HttpContext context, RequestDelegate next)
     {
