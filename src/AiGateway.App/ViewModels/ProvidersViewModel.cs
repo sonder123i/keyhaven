@@ -259,6 +259,9 @@ internal sealed class ProvidersViewModel : ObservableObject
         BaseUrl = row?.BaseUrl ?? string.Empty;
         Models = row?.ModelsText ?? string.Empty;
         ModelHint = DefaultModelHint;
+        // 选中了某一行之后，预设下拉必须回到「自定义」—— 否则它会一直挂着上一条被点过的预设，
+        // 看上去像在说"这一项来自那一家"，而字段其实已经是别的上游了。
+        SelectedPreset = Presets[0];
         Raise(nameof(CanSaveKey));
     }
 }

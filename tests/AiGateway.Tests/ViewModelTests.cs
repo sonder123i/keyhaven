@@ -300,6 +300,19 @@ public sealed class ViewModelTests : IDisposable
         Assert.False(activation.IsActive);
     }
 
+    [Fact]
+    public void Selecting_an_existing_row_puts_the_preset_dropdown_back_to_custom()
+    {
+        var vm = NewProviders();
+        vm.SelectedPreset = DeepSeekPreset(vm);
+        vm.Models = "deepseek-flash";
+        vm.Save();
+
+        // 保存后表单装的是刚存的那一行；预设下拉不能再挂着上一条预设（那会看着像"这一项来自某家"）
+        Assert.Equal("自定义（自己填）", vm.SelectedPreset!.Name);
+        Assert.Equal("DeepSeek", vm.Name);
+    }
+
     private static PresetOption DeepSeekPreset(ProvidersViewModel vm) =>
         vm.Presets.Single(p => p.Preset?.Name.StartsWith("DeepSeek（Anthropic") == true);
 }
