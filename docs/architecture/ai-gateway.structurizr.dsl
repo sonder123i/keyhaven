@@ -1,4 +1,4 @@
-workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关。M1（直通 DeepSeek）已于 2026-10-15 用真 Claude Code 验收；翻译路径与运行日志尚未实现。2026-10-15 按 review 决策重写：只收 Anthropic 入站；出站分直通（Anthropic 兼容上游）与翻译（OpenAI，第二里程碑）；JSON 配置；3 个产品程序集 + 1 个测试项目。" {
+workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关。2026-10-15：M1（直通 DeepSeek）已用真 Claude Code 验收；M2（OpenAI 翻译：请求方向 + 非流式 + 流式）已实现并测试（S11/S12），只差真机验收；运行日志（S9）与发布形态（S10）均已落地。按 2026-10-15 review 决策：只收 Anthropic 入站；出站分直通（Anthropic 兼容上游）与翻译（OpenAI）；JSON 配置；3 个产品程序集 + 1 个测试项目。" {
 
     !identifiers hierarchical
 
@@ -39,14 +39,14 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关。M1（
                 routeResolver = component "路由解析" "[AiGateway] 读激活快照，决定走直通还是翻译、真实模型名是什么。不读代理密钥的任何属性。" "C#" {
                     tags "Lib"
                 }
-                passthroughForwarder = component "直通转发器" "[AiGateway] 上游原生说 Anthropic 协议时使用（Anthropic、DeepSeek /anthropic）。请求体只改顶层 model 字段，其余语义不变（thinking、cache_control、中文原样）；请求头白名单转发 anthropic-*、accept、user-agent，保留原查询串；响应状态码与白名单头（content-type、retry-after、request-id、x-should-retry、anthropic-*）原样，SSE 字节逐块回流；客户端中止即取消上游。失败映射为 Anthropic 形状错误：无激活 503、OpenAI 上游 501、非 JSON 400、上游不可达 502、Key 在当前账户下解不开 503 并提示重新录入；这些网关自己的配置类错误都带 x-should-retry: false，上游 401 没给提示时也补上，上游不可达的 502 仍可重试（S8）。" "JsonNode 单字段改写 + 流式复制" {
+                passthroughForwarder = component "直通转发器" "[AiGateway] 上游原生说 Anthropic 协议时使用（Anthropic、DeepSeek /anthropic）。请求体只改顶层 model 字段，其余语义不变（thinking、cache_control、中文原样）；请求头白名单转发 anthropic-*、accept、user-agent，保留原查询串；响应状态码与白名单头（content-type、retry-after、request-id、x-should-retry、anthropic-*）原样，SSE 字节逐块回流；客户端中止即取消上游。失败映射为 Anthropic 形状错误：无激活 503、非 JSON 400、上游不可达 502、Key 在当前账户下解不开 503 并提示重新录入；这些网关自己产生的错误都带 x-should-retry: false，上游 401 没给提示时也补上，上游不可达的 502 仍可重试（S8）。S11 起入口按上游类型分派，OpenAI 上游不再经过这里。落地：Passthrough/PassthroughForwarder.cs" "JsonNode 单字段改写 + 流式复制" {
                     tags "Lib"
                 }
-                translator = component "Anthropic → OpenAI 翻译器" "[AiGateway] 上游只说 chat/completions 时使用（第二里程碑）。请求翻译（带 stream_options.include_usage）；流式把 OpenAI chunk 重编码为 Anthropic 事件序列并合成 usage；按 D4 只保证 tool_use，thinking 在这条路上丢弃。无状态单例，每请求状态放在上下文对象里。" "System.Text.Json" {
-                    tags "Lib,Milestone2"
+                translator = component "Anthropic → OpenAI 翻译器" "[AiGateway] 上游只说 chat/completions 时使用。请求翻译（stream:true 时补 stream_options.include_usage）；非流式把 chat.completion 译回 Anthropic message；流式把 OpenAI chunk 重编码为 Anthropic 事件序列并合成 usage；按 D4 只保证 tool_use，thinking 在这条路上丢弃。无状态单例，每请求状态放在上下文对象里。已落地：Translation/OpenAiTranslationForwarder.cs · AnthropicToOpenAiTranslator.cs · OpenAiToAnthropicTranslator.cs（S11/S12）" "System.Text.Json" {
+                    tags "Lib"
                 }
-                toolCallSession = component "工具调用增量重编码" "[AiGateway] OpenAI tool_calls 扁平分片（index / 首片 id+name / 后续 arguments、无结束标记）→ Anthropic content_block_start / input_json_delta / content_block_stop，块索引严格配对。全设计唯一的协议难点。" "C#" {
-                    tags "Lib,Milestone2,HighRisk"
+                toolCallSession = component "工具调用增量重编码" "[AiGateway] OpenAI tool_calls 扁平分片（index / 首片 id+name / 后续 arguments、无结束标记）→ Anthropic content_block_start / input_json_delta / content_block_stop，块索引严格配对。全设计唯一的协议难点。已落地为 Translation/OpenAiStreamSession.cs（S12）：名称到齐才开块、开工具块前先关掉文本块、收尾按块号补齐 content_block_stop；文本块与多个并行工具块共用一个索引游标" "C#" {
+                    tags "Lib,HighRisk"
                 }
                 upstreamClients = component "上游 HTTP 客户端" "[AiGateway] IHttpClientFactory 命名客户端；只在请求选项里设 provider id，代码不经手真实 Key，也不知道注入器存在。不跟随重定向（x-api-key 会被带到别的主机）；移除全部内置日志处理器（S5 实测：Trace 级会原样记录真实 Key，打码只盖格式化文本、盖不住结构化字段）。" "IHttpClientFactory" {
                     tags "Lib"
@@ -77,8 +77,8 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关。M1（
         anthropicApi = softwareSystem "Anthropic 兼容上游" "原生说 Messages 协议的上游：api.anthropic.com、https://api.deepseek.com/anthropic 等。DeepSeek 现用模型名 deepseek-flash 与 deepseek-v4-pro；支持 thinking / tools / 图片 / count_tokens，接受 ?beta=true，忽略 anthropic-beta 与 cache_control，未知模型名映射到 deepseek-flash；Key 错误时错误体只回显末 4 位（S8 实测）。" {
             tags "External,Upstream"
         }
-        openAiApi = softwareSystem "OpenAI Chat 上游" "只说 /v1/chat/completions 的上游（api.openai.com 等），需要翻译。第二里程碑。" {
-            tags "External,Upstream,Milestone2"
+        openAiApi = softwareSystem "OpenAI Chat 上游" "只说 /v1/chat/completions 的上游（api.openai.com 等），走翻译。已接通（S11/S12），只差真机验收。" {
+            tags "External,Upstream"
         }
 
         operator -> gateway "管理 Key 与代理密钥、一键切换、看日志" "Keyboard/Mouse"
@@ -99,7 +99,7 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关。M1（
         gateway.appExe.httpEndpoints -> gateway.appExe.routeResolver "解析目标上游与真实模型" "in-process"
         gateway.appExe.routeResolver -> gateway.appExe.activationState "读不可变快照（D7）" "in-process"
         gateway.appExe.httpEndpoints -> gateway.appExe.passthroughForwarder "上游是 Anthropic 兼容：直通" "in-process"
-        gateway.appExe.httpEndpoints -> gateway.appExe.translator "上游是 OpenAI：翻译（第二里程碑）" "in-process"
+        gateway.appExe.httpEndpoints -> gateway.appExe.translator "上游是 OpenAI：翻译" "in-process"
         gateway.appExe.httpEndpoints -> gateway.appExe.runLog "每请求收尾写一行，只记代理密钥指纹" "in-process"
 
         gateway.appExe.passthroughForwarder -> gateway.appExe.upstreamClients "原样请求体（只改 model）+ anthropic-version / anthropic-beta + 原查询串" "in-process"
@@ -114,7 +114,7 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关。M1（
         gateway.appExe.configStore -> gateway.configFile "启动读一次；写入用临时文件 + 替换" "System.Text.Json"
 
         gateway.appExe.upstreamClients -> anthropicApi "HTTPS；真实 Key 只在这条边上离开进程" "HTTPS + SSE"
-        gateway.appExe.upstreamClients -> openAiApi "HTTPS（第二里程碑）" "HTTPS + SSE"
+        gateway.appExe.upstreamClients -> openAiApi "HTTPS" "HTTPS + SSE"
     }
 
     views {
@@ -179,10 +179,6 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关。M1（
             element "Security" {
                 background #a33b3b
                 color #ffffff
-            }
-            element "Milestone2" {
-                border dashed
-                opacity 70
             }
         }
     }

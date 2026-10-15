@@ -229,10 +229,10 @@
         "重新过一遍 structurizr validate，重渲两张 DOT"
       ],
       "executionFit": "fits-one-run",
-      "demoBoundary": "DSL 校验通过；每条禁令都有对应护栏或标注例外",
-      "scopeNotes": null,
+      "demoBoundary": "已于 2026-10-15 完成文档迁移：DSL 里已落地的组件标 current（去掉 Milestone2 标签、随之失效的那个样式、workspace 状态句、直通描述里的「OpenAI 上游 501」、「第二里程碑」的两条边与上游系统标签）、evidence.md 补 §8 组件→文件:行 并修掉 §6（自启已定）与 §7（501 已无）两处过时、violations.csv 关掉 RISK-03/RISK-05（CLOSED-S12）并更新 RISK-06、两张 DOT 重渲 exit 0（303 KB / 137 KB）。DSL 结构自检：花括号 41 配平、描述里无尖括号、无死样式、无 Milestone2 残留。**未达成**：`structurizr validate` 没跑——下载 CLI 被本会话策略拦下（「下载并执行未知代码」），命令与做法在 README「环境与工具」，留给他跑（S13 的 demoBoundary 因此只算部分达成）。",
+      "scopeNotes": "实现期我做的判断，可推翻：① RISK-03 / RISK-05 标 CLOSED-S12 但都带保留——RISK-03 的「上游会不会按 include_usage 给 usage」仍未核实（真机项，写进了 detection）；② RISK-06 保持 MEDIUM：翻译路径同样把 aborted 传下去，但**没有专题测试**，属本轮未闭环（要补就是照搬 S6 那条挂断测试）；③ 本轮任务口径是「关闭 OPEN / RISK 行」，所以没往 CSV 加新行——连 S11/S12 review 里那条 A1（OpenAI 只在末尾给 usage，message_start 的 input_tokens 只能是 0）也没进 CSV，它目前只在我这边记着；④ evidence §8 的行号取类声明行，并写明会随改动漂移。",
       "blockedBy": ["S9", "S10", "S12"],
-      "techGuidance": null
+      "techGuidance": "Structurizr CLI 的下载在本会话被策略拦下，替代做法是先做结构自检（花括号配平 / 描述里无尖括号 / 无死样式 / 无残留标签）。一个坑：Structurizr 的 Person / SoftwareSystem / Container / Component / Element 是**内建类型标签**，按元素类型自动生效、不出现在 tags 行里——我的「死样式」检查因此会把 element \"Person\" 误报成死样式，别照着删。另一个沿用 README 的坑：描述里写尖括号会让导出的 DOT 渲染失败。"
     }
   ]
 }

@@ -1,8 +1,8 @@
 # 架构理解 —— AI 本地代理网关（Windows WPF）
 
 - **版本**：2026-10-15 修订版。第一版由上一个模型在 2026-10-14 产出；本版按 2026-10-15 的 review 与你当场选定的四项决策重写。旧版全文在 git `cc01023`。
-- **真相源**：`ai-gateway.structurizr.dsl`（**已用 Structurizr CLI v2025.11.09 解析通过并导出三视图**；旧版在第 229 行就解析失败，从未能打开过）。
-- **状态**：**M1 已达成（2026-10-15，计划 S1–S10）**：真 Claude Code 经网关直通 DeepSeek，对话、工具调用、thinking、图片、中止、一键切换、吊销都已实测，记录见 `evidence.md` §7；运行日志页与发布形态（依赖框架）也已落地。翻译（M2）尚未实现。
+- **真相源**：`ai-gateway.structurizr.dsl`（2026-10-15 用 Structurizr CLI v2025.11.09 解析通过并导出三视图；旧版在第 229 行就解析失败，从未能打开过。**S13 改动之后尚未重新校验**——CLI 下载被会话策略拦下，命令见 README「环境与工具」）。
+- **状态**：**M1 达成（2026-10-15，计划 S1–S10）**：真 Claude Code 经网关直通 DeepSeek，对话、工具调用、thinking、图片、中止、一键切换、吊销都已实测，记录见 `evidence.md` §7；运行日志页与发布形态（依赖框架）也已落地。**M2（OpenAI 翻译：请求方向 + 非流式 + 流式）已实现并测试（S11/S12），真机验收未做**；S13 文档迁移已做（落地位置见 `evidence.md` §8）。
 - **一句话范围**：Claude Code 指向本机 `127.0.0.1:端口`；网关验代理密钥，把请求交给当前激活的上游——上游原生说 Anthropic 协议就**直通**，只说 OpenAI 协议就**翻译**；真实 Key 只以 DPAPI 密文存在本机 JSON 里。
 
 ## 1. 决策基线
@@ -104,11 +104,11 @@
 ## 6. 里程碑
 
 - **M1 能用**：Claude Code → 网关 → DeepSeek `/anthropic` 直通。零协议翻译，thinking 原样可用。
-- **M2 OpenAI**：加翻译路径，唯一的协议难点是"工具调用增量重编码"（OpenAI 扁平分片 → Anthropic 块生命周期）。
+- **M2 OpenAI**：加翻译路径，唯一的协议难点是"工具调用增量重编码"（OpenAI 扁平分片 → Anthropic 块生命周期）。**已实现（S11/S12）**：请求方向与两种响应方向都在 `Translation/`，块边界的构造规则见 `findings` §6；只差真机验收。
 
 ## 7. 已验证 / 未验证
 
-- ✅ DSL 解析通过并导出 L1/L2/L3（Structurizr CLI v2025.11.09）；两张 DOT 实渲无报错（Graphviz 16.1.0）。
+- ✅ DSL 用 Structurizr CLI v2025.11.09 解析通过并导出 L1/L2/L3（**S13 改动后待重新校验**）；两张 DOT 在 S13 之后重渲无报错（Graphviz 16.1.0，exit 0）。
 - ✅ 外部事实见 §3（附网址）。
 - ✅ 骨架已按 D11 重做为 3 + 1 个项目（计划 S1）：AiGateway 碰不到 Security 有编译期两道拦截（NU1201、MSB4006）加护栏测试；App 构造 Security 内部类型即 CS0122。
 - ✅ DeepSeek 接受 `?beta=true`、支持 `count_tokens`（Claude Code 实际没调用过）、Key 错误时只回显末 4 位（S8 实测，`evidence.md` §7）。

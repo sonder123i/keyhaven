@@ -2,6 +2,8 @@
 
 真相源：`ai-gateway.structurizr.dsl`。本文件说明每条决策**出自谁、哪一轮**，以及每条外部事实的出处。2026-10-15 修订；旧版在 git `cc01023`。
 
+**落地状态（2026-10-15）**：M1（直通 DeepSeek）已真机验收（§7）；**M2（OpenAI 翻译：请求方向 + 非流式 + 流式）已实现并测试（S11/S12），真机验收未做**；运行日志（S9）、发布形态（S10）均已落地；144 个测试全绿。组件 → `文件:行` 见 §8。
+
 置信度：high = 你原话或你当面选定 / 官方文档；medium = 我的推断；low = 未核实。
 
 ---
@@ -74,7 +76,7 @@
 
 ## 6. 刻意不画的东西
 
-OAuth / Claude 订阅接入、多用户、云同步、局域网共享、Windows 服务形态、开机自启（托盘常驻已覆盖"别关窗即断"；自启要不要，S10 再问你）。
+OAuth / Claude 订阅接入、多用户、云同步、局域网共享、Windows 服务形态、开机自启（托盘常驻已覆盖"别关窗即断"；**S10 已定：不做自启**，要开机跑就自己把快捷方式丢进 `shell:startup`，见 D15）。
 
 ## 7. M1 验收实测（S8，2026-10-15）
 
@@ -109,9 +111,33 @@ OAuth / Claude 订阅接入、多用户、云同步、局域网共享、Windows 
 | 403 | 1 次 | 2 秒 |
 
 网关的修法：
-- 网关自己产生的配置类错误一律带 `x-should-retry: false`：没有激活上游（503）、OpenAI 上游（501）、请求体不是 JSON（400）、Key 解不开（503）。代理密钥无效的 401 也一样。
+- 网关自己产生的配置类错误一律带 `x-should-retry: false`：没有激活上游（503）、请求体不是 JSON（400）、Key 解不开（503）。代理密钥无效的 401 也一样。（表里那条「OpenAI 上游（501）」是 S8 当时的状态：S11 起 OpenAI 上游走翻译路径不再经过直通，S12 起 `src/` 里已搜不到 501。）
 - 上游返回 401、且上游自己没给重试提示时，网关补上 `false`。
 - `x-should-retry` 加进响应头白名单，上游自己的提示原样透传。
 - 上游不可达（502）保持可重试。
 
 **`-p` 模式覆盖不到的**：交互式会话（按 Esc / Ctrl+C 中止、长会话的上下文压缩），需要你在自己的终端里用一次。
+
+## 8. 落地位置（组件 → 文件:行，2026-10-15）
+
+DSL 的 15 个组件已全部落地。行号取**类声明行**（会随改动漂移，改代码时顺手核一眼）；同文件里的小类型写在括号里。
+
+| 组件（DSL 名） | 程序集 | 落地位置 |
+| --- | --- | --- |
+| 组合根与宿主（托盘、单实例） | App | `App.xaml.cs:14`、`TrayIcon.cs:6`、`SingleInstanceGuard.cs:3` |
+| WPF 界面 | App | `MainWindow.xaml.cs:8`、`IssuedKeyWindow.xaml.cs:6` |
+| ViewModels | App | `ViewModels/MainViewModel.cs:9`、`ProvidersViewModel.cs:27`、`ProxyKeysViewModel.cs:13`、`RunLogViewModel.cs:19`、`SettingsViewModel.cs:5`、`ActivationViewModel.cs:7` |
+| 本地 HTTP 入口（含统一收尾中间件） | AiGateway | `Hosting/GatewayServer.cs:16`（`Forward` 按上游类型分派、`ObserveRun` 收尾） |
+| 代理密钥验证器 | AiGateway | `ProxyKeys/ProxyKeyAuthenticator.cs:7`、`ProxyKeyHasher.cs:6` |
+| 激活快照 | AiGateway | `Configuration/GatewayConfig.cs:5`（`ActiveSelection` 在同文件 :30） |
+| 路由解析 | AiGateway | `Routing/RouteResolver.cs:16`（`UpstreamRoute` :5、`RouteResult` :9） |
+| 直通转发器 | AiGateway | `Passthrough/PassthroughForwarder.cs:18` |
+| Anthropic → OpenAI 翻译器 | AiGateway | `Translation/OpenAiTranslationForwarder.cs:20`、`AnthropicToOpenAiTranslator.cs:8`、`OpenAiToAnthropicTranslator.cs:8` |
+| 工具调用增量重编码（流式会话） | AiGateway | `Translation/OpenAiStreamSession.cs:13`、`AnthropicStreamEvent.cs:8` |
+| 上游 HTTP 客户端 | AiGateway | `AiGatewayServiceCollectionExtensions.cs:14`（命名客户端 + 管道装配）、`Upstream/UpstreamRequest.cs:3` |
+| 配置存储 | AiGateway | `Configuration/ConfigStore.cs:7` |
+| 运行日志 | AiGateway | `RunLog/RunLogRing.cs:3`（容量 500）、`RunLog/IRunLog.cs:12`、`Hosting/RunRequestState.cs:9` |
+| 真实密钥注入处理器 | Security | `CredentialInjectingHandler.cs:7` |
+| DPAPI 保护器与只写密钥库 | Security | `SecretProtector.cs:6`、`RealKeyVault.cs:5`、`AiGatewaySecurityServiceCollectionExtensions.cs:7` |
+
+另：发布形态（D16）落在 `src/AiGateway.App/Properties/PublishProfiles/Release-win-x64.pubxml` 与 `docs/install.md`；测试在 `tests/AiGateway.Tests/`（144 个用例）。
