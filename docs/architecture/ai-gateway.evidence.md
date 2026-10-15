@@ -141,3 +141,23 @@ DSL 的 15 个组件已全部落地。行号取**类声明行**（会随改动�
 | DPAPI 保护器与只写密钥库 | Security | `SecretProtector.cs:6`、`RealKeyVault.cs:5`、`AiGatewaySecurityServiceCollectionExtensions.cs:7` |
 
 另：发布形态（D16）落在 `src/AiGateway.App/Properties/PublishProfiles/Release-win-x64.pubxml` 与 `docs/install.md`；测试在 `tests/AiGateway.Tests/`（144 个用例）。
+
+## 9. M2 验收实测（2026-10-15）
+
+**环境**
+- 客户端 Claude Code 2.1.300；网关为 Debug 构建（含 S11/S12 与 review 修补的全部代码改动，即 `38f58bd`；其后的 `51f87e1`、`3d14f78` 只动文档）。
+- 上游 MiMo `https://api.xiaomimimo.com/v1`（**OpenAI 协议 ⇒ 走翻译路径**），模型 `mimo-v2.6-pro`；激活档已确认为它（读配置元数据核对）。
+- Claude Code 用 `-p --permission-mode acceptEdits` 跑；配置目录经 `CLAUDE_CONFIG_DIR` 指向临时目录（**不碰 `~/.claude`**，那条真配置至今不存在），`ANTHROPIC_BASE_URL=http://127.0.0.1:8000`、`ANTHROPIC_AUTH_TOKEN` 是网关签发的代理密钥。
+- 客户端 → 网关 → MiMo 直连，**中间没有任何中继**；全程没有出现任何真实上游 Key 的明文。
+
+| # | 项 | 做法 | 现象 | 结论 |
+| --- | --- | --- | --- | --- |
+| T1 | 工具调用往返 | 让它 Write 建 `mimo-ok.txt`（内容 gateway ok）再用 Read 读回 | 退出码 0；文件真的落盘，内容 `gateway ok.`（句号是模型自己加的）；事件流里出现 **2 个 `tool_use` + 2 个 `tool_result`**、`num_turns=3` | ✅ **增量重编码在真客户端上成立**（S12 唯一的未验项） |
+| T2 | 流式 | 同上（Claude Code 恒用 `stream:true`） | 事件按 Anthropic 序列到达并被解析（`assistant` × 3、`text` × 2），没有出现 OpenAI 的帧 | ✅ OpenAI chunk → Anthropic 事件重编码成立 |
+| T3 | usage（**RISK-03**） | 看 `--output-format stream-json` 里客户端收到的 usage | `message_start` 是 `0/0`（如设计）；**最终 usage = `input_tokens 62499` / `output_tokens 296`**，客户端据此算出 `total_cost_usd 0.2559` | ✅ **上游确实按 include_usage 给了 usage**：`output_tokens` 是模型侧数字，客户端估算不出来；`message_delta` 的补正也被客户端采纳（顺带回答了 A1 的担心） |
+| T4 | `max_tokens` vs `max_completion_tokens` | MiMo 官方样例用后者，我们发前者 | 没有 400，请求正常完成 | ✅ MiMo 收 `max_tokens`——当初担心的那条风险不成立 |
+| T5 | 上游 401 的失败速度 | 激活档还留在 DeepSeek（其 Key 已失效）时误跑了两次 | 401 在 **20 秒内**返回并显示，S8 那套三分钟重试没有出现 | ✅ `x-should-retry:false` 生效（这条验在**直通**路径；翻译路径的同类行为同源代码） |
+
+**过程中暴露的一个 UX 问题（未修，列为开放项）**：那两次误跑的根因是**一键切换没生效**——应用会**拒绝激活没有 Key 的上游**（S7 的设计），但提示一闪而过，用户会以为自己已经切过去了，于是请求仍走 DeepSeek、拿到一个与 MiMo 无关的 401。建议切换失败时给更显眼的反馈。**我没有改代码**；要不要立一条 RISK 行由你定。
+
+**仍未覆盖**：① 翻译路径上的**客户端中止**（RISK-06 在 CSV 里如实标着「没有专题测试」）；② 真机上 Claude Code 的**交互式会话**（Esc / Ctrl+C、上下文压缩）——一直是人工项。
