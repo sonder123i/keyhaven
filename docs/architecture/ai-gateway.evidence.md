@@ -68,7 +68,7 @@
 | OPEN-04 | `count_tokens` 依赖强度 | **已决**：官方文档写明可选（§3） |
 | OPEN-05 | 是否需要 OpenAI 协议入站 | **已决**：不需要（D1 修订） |
 | OPEN-07 | 首个上游 | **已决**：DeepSeek 直通（D14）；需要你提供 DeepSeek Key |
-| OPEN-11 | 发布形态：依赖框架（目标机需装 ASP.NET Core + WindowsDesktop 两个运行时）还是自包含（体积大） | **开着**：计划 S10 实测两种产物体积后由你选 |
+| OPEN-11 | 发布形态：依赖框架还是自包含 | **已决（S10 实测四种产物后你选定）**：依赖框架 win-x64（0.37 MB / 9 文件，热启动 587–644 ms）。自包含最轻 79.3 MB，且"单文件"要么旁边留 6 个原生 DLL、要么首跑往 `%TEMP%\.net` 解 211 MB。同轮你定了不做开机自启 |
 | OPEN-12 | DeepSeek 是否接受 `?beta=true`、是否支持 `count_tokens`、错误体是否回显 Key | **已决（S8 实测，§7）**：接受 `?beta=true`；支持 `count_tokens`（但 Claude Code 没调用过）；Key 错误时只回显末 4 位，其余错误不回显 |
 | OPEN-13 | IHttpClientFactory 自带日志处理器是否给鉴权头打码 | **已决（S5 实测）**：不打码，Trace 级原样记录真实 Key；`RedactLoggedHeaders` 只打码格式化文本，结构化字段仍是明文 ⇒ 上游客户端用 `RemoveAllLoggers()`，护栏⑦守住 |
 

@@ -169,19 +169,19 @@
     },
     {
       "id": "S10",
-      "title": "发布形态（OPEN-11）",
-      "covers": ["OPEN-11", "D5"],
+      "title": "发布形态（OPEN-11）与开机自启",
+      "covers": ["OPEN-11", "D5", "D15", "D16"],
       "tasks": [
-        "实测两种产物：依赖框架（目标机需装 ASP.NET Core + WindowsDesktop 两个运行时）与自包含单文件——体积、启动时间",
-        "把两组数字给你选（\"轻量\"的取舍由你定），同时问一次要不要开机自启",
-        "按选定方式写发布配置与一页安装说明",
-        "在发布目录直接启动验证"
+        "实测四种产物（依赖框架 / 自包含单文件 / 自包含+压缩 / 单文件+压缩+原生打包）的体积与到 /health 200 的启动时间，各自在发布目录直接启动",
+        "把数字给你选；同时问一次要不要开机自启",
+        "按选定方式写发布配置（PublishProfile）与一页安装说明",
+        "用该配置发布一次并从发布目录启动验证"
       ],
       "executionFit": "fits-one-run",
-      "demoBoundary": "一个可直接运行的发布产物 + 安装说明",
-      "scopeNotes": "数字出来之前不预设答案。",
+      "demoBoundary": "已于 2026-10-15 实测：A 依赖框架 0.37 MB / 9 文件、热启动 587–644 ms；B 自包含单文件 179.6 MB（exe 171.3 + 6 个原生 DLL 8.2，**所谓单文件其实不是**）；C 自包含+压缩 83.7 MB；D 单文件+压缩+原生打包 79.3 MB 但**首跑往 %TEMP%\\.net 解 211 MB**（969 个文件）。四种都在发布目录启动并等到过 /health 200。你选 A，并定下不做开机自启。产物：`Properties/PublishProfiles/Release-win-x64.pubxml` + `docs/install.md`，按该配置发布实测 9 个文件 0.37 MB、启动 644 ms",
+      "scopeNotes": "数字出来之前不预设答案——四种都量了才问。压缩对启动只加 40–60 ms，可以忽略；真正拉开差距的是体积与首跑开销。开机自启不做（要开机跑就自己丢 `shell:startup`），这是你的决定。",
       "blockedBy": ["S8"],
-      "techGuidance": null
+      "techGuidance": "WPF 的原生库（wpfgfx、PresentationNative、D3DCompiler、aspnetcorev2_inprocess 等 6 个）默认不进单文件包，所以 PublishSingleFile 的产物仍是「exe + 6 个 DLL」；只有再加 IncludeNativeLibrariesForSelfExtract 才是真单文件，代价是首跑解包。"
     },
     {
       "id": "S11",

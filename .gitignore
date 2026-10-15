@@ -428,6 +428,10 @@ test-results/
 # core.ignorecase=true on Windows makes *.app swallow this project dir
 !/src/AiGateway.App/
 
+# The stock VisualStudio block ignores *.pubxml (line 193); this project's publish profile IS a deliverable —
+# without it the documented publish command in docs/install.md fails on a fresh clone.
+!/src/AiGateway.App/Properties/PublishProfiles/*.pubxml
+
 # content below from: https://github.com/github/gitignore/blob/master/Global/macOS.gitignore
 # General
 .DS_Store

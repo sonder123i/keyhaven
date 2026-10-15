@@ -18,7 +18,7 @@ C# / .NET 8 WPF 桌面应用。Claude Code 把 `ANTHROPIC_BASE_URL` 指向本机
 | --- | --- |
 | 1–3 探索 / 澄清 / 架构 | ✅ **2026-10-15 review 后重写**（第一版出自上一个模型；为什么改见下文与 `evidence.md` §2） |
 | 4 实现计划 | ✅ **13 个故事**：`docs/plan/ai-gateway.implementation-plan.json`。M1 = S1–S8（DeepSeek 直通可用），M2 = S11–S12（OpenAI 翻译） |
-| 5 编码 | 🟢 **M1 达成，S1–S9 完成（2026-10-15）**。真 Claude Code 2.1.300 经网关直通 DeepSeek：对话、工具调用、thinking、图片、中止、一键切换、吊销后立即 401 全部实测通过（记录：`evidence.md` §7）。已有：3 + 1 个项目；`config.json` + DPAPI 只写密钥库；只监听 `127.0.0.1` 的宿主（单实例、托盘常驻）；代理密钥（签发 / 鉴权 / 即刻吊销）；真实 Key 注入（不跟随重定向、零日志、发完即删）；直通转发（只改 `model`、头白名单、真流式、中止传播）；最小 UI（上游与 Key / 代理密钥 / 运行日志 / 设置 + 顶栏一键切换）；**运行日志**：内存里最多 500 行，一行一请求（时间、密钥指纹、上游、模型、状态、首字节、结束原因），由唯一的收尾中间件写，UI 只拉取，重启清空。S8 发现 Claude Code 对 5xx 与 401 会重试约 3 分钟，已让配置类错误带 `x-should-retry: false`（RISK-17）。109 个测试全绿。**下一步 = S10**（发布形态：依赖框架 vs 自包含，数字出来你选） |
+| 5 编码 | 🟢 **M1 达成，S1–S10 完成（2026-10-15）**。真 Claude Code 2.1.300 经网关直通 DeepSeek：对话、工具调用、thinking、图片、中止、一键切换、吊销后立即 401 全部实测通过（记录：`evidence.md` §7）。已有：3 + 1 个项目；`config.json` + DPAPI 只写密钥库；只监听 `127.0.0.1` 的宿主（单实例、托盘常驻）；代理密钥（签发 / 鉴权 / 即刻吊销）；真实 Key 注入（不跟随重定向、零日志、发完即删）；直通转发（只改 `model`、头白名单、真流式、中止传播）；最小 UI（上游与 Key / 代理密钥 / 运行日志 / 设置 + 顶栏一键切换）；运行日志（500 行内存环形缓冲，一行一请求，只拉取）；**发布形态选定为依赖框架**（0.37 MB / 9 文件，一条命令，见 `docs/install.md`），不做开机自启。111 个测试全绿。**下一步 = S11 / S12**（M2：OpenAI 上游的协议翻译） |
 
 ## 先读这些（按顺序）
 
@@ -48,6 +48,8 @@ C# / .NET 8 WPF 桌面应用。Claude Code 把 `ANTHROPIC_BASE_URL` 指向本机
 | D12 | 注入器是 DelegatingHandler，组合根挂进上游 HttpClient 管道，无人可调用 *(10-15)* |
 | D13 | `IRealKeyVault` 只写 *(10-15)* |
 | D14 | M1 = DeepSeek 直通，零协议翻译 *(10-15)* |
+| D15 | **不做开机自启**（要开机跑就自己把快捷方式丢进 `shell:startup`）*(10-15)* |
+| D16 | 发布形态 = **依赖框架**（win-x64，0.37 MB / 9 文件）；代价：目标机要装 .NET 8 的 Desktop 与 ASP.NET Core 两个运行时 *(10-15 实测四种产物后选定)* |
 
 ## 2026-10-15 review 改了什么（一段话）
 
@@ -62,9 +64,10 @@ C# / .NET 8 WPF 桌面应用。Claude Code 把 `ANTHROPIC_BASE_URL` 指向本机
   （本机 JDK 25 可跑；CLI 94MB，用完即删，不进仓库）。DSL 描述里别写尖括号（`<port>` 这类会让导出的 DOT 渲染失败）。
 - **Claude Code 2.1.300 已用 npm 全局装好**。接网关：在网关的「代理密钥」页生成一把，把弹出的配置片段合并进 `~/.claude/settings.json`；DeepSeek 上游的地址填 `https://api.deepseek.com/anthropic`，模型填 `deepseek-flash, deepseek-v4-pro`（DeepSeek 已改名，旧的 `deepseek-chat` / `deepseek-reasoner` 别再用）。
 - C 盘 90% 满（剩约 26G）；E 盘充裕。
+- 发布：`docs/install.md`（依赖框架，一条 `dotnet publish -p:PublishProfile=Release-win-x64`；本机已具备 8.0 的三个共享框架）。
 
 ## 仍然开着
 
-- `OPEN-11` 发布形态：依赖框架还是自包含——S10 实测数字后由你选。已知（S1 实测 runtimeconfig）：App 需要 **3 个**共享框架（Microsoft.NETCore.App、WindowsDesktop.App、AspNetCore.App），依赖框架发布时目标机要装齐。
 - 交互式会话（Esc / Ctrl+C 中止、长会话的上下文压缩）没有自动化覆盖——S8 只能用 `-p` 模式跑，需要你自己用一次。
 - 仓库原定 M1 跑通后再考虑公开；M1 已达成，公不公开、什么时候公开由你定（目前仍是 private）。
+- M2（S11/S12）未开始：OpenAI 上游的协议翻译，唯一的难点是工具调用增量重编码。

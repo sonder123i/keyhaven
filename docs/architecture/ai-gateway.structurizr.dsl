@@ -14,7 +14,7 @@ workspace "AI 本地代理网关" "Windows WPF 桌面端 AI 代理网关。M1（
 
         gateway = softwareSystem "AI 本地代理网关" "单机桌面应用：真实上游 Key 以 DPAPI 密文存在本机 JSON 配置里；对外只发可吊销的代理密钥。Anthropic 兼容上游走直通，OpenAI 上游走翻译。" {
 
-            appExe = container "AiGateway.App.exe" "唯一可部署单元，UI 与 Kestrel 同进程（D3）。由 3 个程序集组成：AiGateway.App（WPF + 组合根 + 托盘）、AiGateway（网关、路由、直通、翻译、配置、日志；不引用 Security）、AiGateway.Security（DPAPI 与注入处理器；全工程唯一能解密）。各库默认 internal，只公开注册方法与几个窄端口（IRealKeyVault 只写、ICiphertextStore 只存取密文、IProxyKeyRegistry 只给指纹、IGatewaySettings 不碰任何 Key；完整清单见 findings §1）。" "C# / .NET 8 + WPF + ASP.NET Core Kestrel" {
+            appExe = container "AiGateway.App.exe" "唯一可部署单元，UI 与 Kestrel 同进程（D3）。由 3 个程序集组成：AiGateway.App（WPF + 组合根 + 托盘）、AiGateway（网关、路由、直通、翻译、配置、日志；不引用 Security）、AiGateway.Security（DPAPI 与注入处理器；全工程唯一能解密）。各库默认 internal，只公开注册方法与几个窄端口（IRealKeyVault 只写、ICiphertextStore 只存取密文、IProxyKeyRegistry 只给指纹、IGatewaySettings 不碰任何 Key；完整清单见 findings §1）。" "C# / .NET 8 + WPF + ASP.NET Core Kestrel；发布形态：依赖框架 win-x64（0.37 MB，目标机需 .NET 8 的 Desktop 与 ASP.NET Core 两个运行时，本机已具备）" {
                 tags "Deployable"
 
                 compositionRoot = component "组合根与宿主" "[AiGateway.App] 调 GatewayServer.Create 并在装配回调里调 AddAiGatewaySecurity()；Kestrel 由空宿主构建器起，不读任何环境变量与 appsettings（否则 Kestrel__Endpoints__* 会多开 0.0.0.0 监听，S3 实测）；端口被占时提议改用一个空闲端口（写进配置后重建宿主），拒绝则退出；单实例 Mutex；托盘常驻：关窗只隐藏，托盘菜单才退出（D3 的必然要求，否则关窗即断 Claude Code）。" ".NET Generic Host + DI" {

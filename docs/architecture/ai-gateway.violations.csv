@@ -22,6 +22,7 @@ RISK-13,HIGH,环境变量 / appsettings,Kestrel 监听地址,binding-scope,默�
 RISK-15,HIGH,上游配置,上游 API,data-leak,上游地址填成 http 时，注入的真实 Key 会以明文走网络,保存上游时只有回环地址（本机桩 / 本机代理）允许 http，其余必须 https；设置层与 ViewModel 各有测试,high,S7 新增；红灯实测：去掉这条校验即红
 RISK-16,MEDIUM,确认框,吊销代理密钥 / 删除上游与 Key,usability,WPF MessageBox 默认按钮是「是」，误按回车就执行了不可逆操作,删除 / 吊销确认框显式默认「否」；真 exe 实测 DM_GETDEFID 改前 6、改后 7,medium,S7 新增；MessageBox 无法单元测试，靠代码审查 + 实测
 RISK-17,MEDIUM,网关与上游的错误响应,Claude Code 的重试逻辑,availability,Claude Code 对 5xx 与 401 重试约 3 分钟（10 次）才显示错误；没激活上游、存的 Key 错、代理密钥被吊销这类配置问题会让用户干等 3 分钟,网关自己的配置类错误（503 / 501 / 400）与代理密钥 401 带 x-should-retry: false；上游 401 没给提示时补 false；该头进响应头白名单；上游不可达 502 仍可重试。测试逐条断言,high,S8 用真 Claude Code 发现：修复前 174 秒 / 178 秒，修复后 1 次请求 2–3 秒；红灯：新断言在修复前全红
+RISK-18,LOW,依赖框架产物,目标机,.NET 共享框架,产物自己只有 0.37 MB，运行时在目标机上；没装 .NET 8 的 Desktop 与 ASP.NET Core 运行时的机器起不来,安装说明写明前提与官方 8.0 下载页（docs/install.md）；本机已具备三个 8.0 共享框架（dotnet --list-runtimes 实测）,high,S10 选依赖框架换来 200 倍体积优势的代价；D16。若将来要发给别人，改出自包含产物（一条命令加参数）
 DECIDED-01,HIGH,AiGateway（代理密钥验证器）,已启用哈希的内存快照,correctness,吊销要即刻生效；同进程下写配置的同时整体替换内存快照即可，不必每请求读盘,护栏⑤：吊销后下一个请求必须 401（S4 落地：快照就是 ConfigStore.Current，写入即替换；红灯实测——给鉴权加一次性缓存后该测试变红）,high,2026-10-15 修订：原"每请求现查库、不加缓存"的前提（写入方在别处）在 D3 下不成立
 FORBIDDEN-01,RETIRED,Mapping.Anthropic,Mapping.OpenAI,compile-time,两个 codec 互引,—,—,D1 修订后只有一个翻译器，规则不再有对象
 FORBIDDEN-02,RETIRED,AiGateway.Core,其他程序集,compile-time,内核反向依赖,—,—,D11 后没有 Core 程序集

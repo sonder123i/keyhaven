@@ -23,6 +23,8 @@
 | D12 | 注入器是 Security 里的 `DelegatingHandler`，由组合根挂进上游 HttpClient 管道，**无人可调用** | 10-15 选定（"H"） |
 | D13 | `IRealKeyVault` **只写**（Save / Delete / Exists），签名上拿不到明文 | 10-15 review |
 | D14 | 第一个里程碑 M1 = **DeepSeek 直通**，零协议翻译；OpenAI 翻译是 M2 | 10-15 选定 |
+| D15 | **不做开机自启**：要开机跑就自己把快捷方式丢进 `shell:startup` | 10-15 你定（S10） |
+| D16 | 发布形态 = **依赖框架** win-x64（0.37 MB / 9 文件）；代价是目标机要装 .NET 8 的 Desktop 与 ASP.NET Core 两个运行时 | 10-15 实测四种产物后你选定（S10） |
 
 **为什么第一版被大改**（详见 `evidence.md` §3）：
 1. 第一轮"（推荐）"的 D1 双向矩阵、D2 SQLite 都**比你的原话更重**；"轻量"原则第二轮才出现，D1/D2 从没按它复核。

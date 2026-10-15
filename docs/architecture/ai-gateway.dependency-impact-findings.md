@@ -64,6 +64,7 @@ AiGateway.Tests ──► 以上全部（InternalsVisibleTo）
 
 - **组件图 ≠ 程序集图**：同一程序集内两条边无害，折叠到程序集上可能成环。照图建引用，第一步必须是 `dotnet build`。
 - **`.gitignore` 的 `*.app`** 在 Windows（`core.ignorecase=true`）下会吞掉任何名字以 `.App` 结尾的项目目录：本地构建照样绿，推上去的仓库却缺项目。已加负规则 `!/src/AiGateway.App/`。
+- **同一个坑的第二例（S10）**：VS 模板的 `.gitignore` 第 193 行有 `*.pubxml`，把 S10 的发布配置 `Release-win-x64.pubxml` 吞了——本地 `dotnet publish -p:PublishProfile=…` 照样成功，克隆出来却没有这个文件，`docs/install.md` 里那条命令直接失败。已加负规则。**教训**：凡是"文档里叫别人执行的命令所依赖的文件"，都要过一遍 `git status`，光看本地能跑不算数。
 - **`TreatWarningsAsErrors` 管不到 MSBuild 警告**："引用的项目不存在"只是警告，构建 exit 0。已加 `MSBuildTreatWarningsAsErrors`。
 - **SDK 的 ProjectReference 默认传递**：A → B → C 会让 A 直接看见 C。新结构里 App 本来就直接引用两个库，所以靠 `internal` 而不是靠"看不见程序集"来守 UI。
 - **"全绿"只认 fresh clone**：`git status` 干净时看不到被忽略的文件。
