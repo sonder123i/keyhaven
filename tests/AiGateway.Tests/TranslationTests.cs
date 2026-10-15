@@ -224,18 +224,6 @@ public class TranslationTests
     }
 
     [Fact]
-    public async Task Streaming_against_an_OpenAI_upstream_is_refused_until_S12()
-    {
-        await using var gw = await GatewayHarness.StartAsync(kind: "open_ai");
-
-        using var response = await gw.Client.SendAsync(gw.Messages(StreamingRequest));
-
-        Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode);
-        Assert.Equal("false", response.Headers.GetValues("x-should-retry").Single());
-        Assert.Empty(gw.Upstream.Requests);
-    }
-
-    [Fact]
     public async Task An_Anthropic_upstream_still_takes_the_passthrough_path()
     {
         await using var gw = await GatewayHarness.StartAsync();

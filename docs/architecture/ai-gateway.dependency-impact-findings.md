@@ -119,9 +119,17 @@ H 的收益：没有任何代码能调用注入器；上游客户端不经手明
    - **分派在入口**：`GatewayServer.Forward` 调 `RouteResolver.Resolve()` 一次，按 `RouteKind` 交给直通或翻译器，并把这份 `RouteResult` 原样传下去（护栏⑪因此收紧，见 §2）。
    - **请求翻译**（`AnthropicToOpenAiTranslator`）：`system`（字符串或文本块数组）→ 一条 system 消息；`messages` 里 user 的文本 / 图片 → `text` / `image_url`（base64 → `data:` URL）；assistant 的 `tool_use` → 该条 assistant 消息的 `tool_calls`（`input` 序列化成 JSON 字符串）；user 的 `tool_result` → 独立的 `role:"tool"` 消息；`tools` → `{type:function,function:{name,description,parameters}}`；`tool_choice` 的 `auto/any/none/tool` → `auto/required/none/{function}`；`stop_sequences`→`stop`；`max_tokens`/`temperature`/`top_p` 原样搬。**`stream:true` 时补 `stream_options.include_usage`**（RISK-03）；thinking / cache_control / metadata 全部丢弃（D4）。
    - **响应翻译**（`OpenAiToAnthropicTranslator`，仅非流式）：`choices[0].message` → Anthropic message；`content` → 文本块，`tool_calls` → `tool_use` 块（`arguments` 反序列化成 `input`，坏 JSON 退化成 `{}`，不崩）；`finish_reason` → `stop_reason`（`stop`→`end_turn`、`length`→`max_tokens`、`tool_calls`→`tool_use`）；`usage.prompt/completion_tokens` → `input/output_tokens`。上游 4xx/5xx 的错误体是 OpenAI 形状，客户端只认 Anthropic 形状，所以按状态码重包一层（401→`authentication_error` 等）。
-   - **分工边界**：翻译路径上 `count_tokens` 直接 404（RISK-04：客户端自行按字符估算）；流式请求回 501 + `x-should-retry:false`（留给 S12）；上游是 OpenAI 时 Key 以 `Authorization: Bearer` 注入（`UpstreamRequest.BearerAuth` 请求选项，注入处理器仍是一处解密点）。
+   - **分工边界**：翻译路径上 `count_tokens` 直接 404（RISK-04：客户端自行按字符估算）；上游是 OpenAI 时 Key 以 `Authorization: Bearer` 注入（`UpstreamRequest.BearerAuth` 请求选项，注入处理器仍是一处解密点）。流式在 S11 时先回 501，S12 已把它接上（见下）。
    - **红灯 5 组**（各自只让对应测试红）：去掉 bearer 分支 → 2 条 bearer 测试；去掉 `stream_options` → `Streaming_asks_for_usage…`；把 `thinking` 抄进上游请求 → `Anthropic_only_fields_never_reach_the_upstream`；去掉 `count_tokens` 404 → `Count_tokens…is_404…`；入口不再分派（OpenAI 也走直通）→ 5 条 OpenAI 端到端测试；把 `RouteResolver` 加回转发器构造函数 → 只有护栏⑪那条结构性断言。
    - **未覆盖**：真 OpenAI 协议上游的端到端（含真 Claude Code 调工具）属 S12 验收；S11 只以 fixture + 桩上游验收。
+   **S12 落地（流式）**：
+   - **每请求一个会话对象**（`OpenAiStreamSession`，RISK-05）：块索引游标、工具参数累积、usage 都在它身上，没有 `static`，所以并发会话不会串流。DSL 里的 `translator -> toolCallSession` 就落在它身上（S13 迁移文档时把两个组件对齐）。
+   - **块生命周期凭空构造**：OpenAI 的 `tool_calls` 只有 `index` + 追加式 `arguments`、没有结束标记；Anthropic 要 `content_block_start → N × input_json_delta → content_block_stop`。规则：**名称到齐才开块**（id+name 必须进 `content_block_start`，先到的 arguments 先缓存、开块时一次补发）；开工具块前先把打开着的文本块关掉，块号只增不回退；收尾时按块号顺序补齐所有 `content_block_stop`。文本与多个并行工具块因此严格配对（fixture 断言 starts == stops == [0,1,2]）。
+   - **未完成 JSON 的策略**：已发出的分片就照原样发，不补右括号、不丢调用——Anthropic 自己在 `max_tokens` 截断工具调用时也是这个行为，`stop_reason` 会给 `max_tokens`。非流式路径相反：那里拿得到完整字符串，坏 JSON 退化成 `{}`。**这条不对称是刻意的**（流式无法追改已上线的内容）。
+   - **usage 合成**（RISK-03）：上游的 usage 只在末尾那个 `choices:[]` 分片里，所以 `message_start` 只能先报 0，真实 `input/output_tokens` 在 `message_delta` 里补正——结构合法，客户端可据此覆盖。
+   - **不许缓冲**：`ResponseHeadersRead` + 每个上游分片后 flush。红灯实测：改回 `ResponseContentRead`（先读完再写）→ 只有那条增量到达测试变红，且它直接挂到客户端超时（1 分 41 秒），与 S6「真正致命的是缓冲」同因。
+   - **红灯 5 组**（各自只让对应测试红）：块索引不递增 → 2 条配对测试；不等 name 就开块 → `A_tool_block_waits_for_the_name_before_opening`；收尾不补 `content_block_stop` → 3 条块生命周期测试；`message_delta` 的 usage 写死 0 → `The_final_usage…`；缓冲整包 → 上面那条增量测试。
+   - **未覆盖**：**没有接过真上游**。我录不到真实分片流（本会话策略禁止我用任何真实 Key），所以 golden fixture 是按 OpenAI 官方 wire 格式手写的，不是录制的；真 Claude Code → OpenAI 上游的工具调用也要你自己跑一次（README「仍然开着」）。
 
 ## 7. 尚未闭环
 

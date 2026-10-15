@@ -214,10 +214,10 @@
         "真 Claude Code 接 OpenAI 上游跑一次工具调用"
       ],
       "executionFit": "fits-one-run",
-      "demoBoundary": "一段真实录制的 tool_calls 分片流 → 合法 Anthropic 块序列，索引全程配对；Claude Code 在 OpenAI 上游上完成一次读写文件",
-      "scopeNotes": "这是\"一种协议没有、另一种强制要求\"的信息，不是接口不匹配。需要你提供 OpenAI Key。",
+      "demoBoundary": "已于 2026-10-15 完成（fixture + 桩上游，138 测试全绿）：一段 OpenAI 分片流（文本 + 两个并行 tool_calls + 末尾 usage 分片 + [DONE]）译成合法 Anthropic 事件序列，块号 starts == stops == [0,1,2] 全程配对；文本与各工具块的 arguments 分片无损重组；事件随上游分片增量到达（不缓冲）。**未达成**：计划里写的「一段真实录制的 tool_calls 分片流」与「Claude Code 在 OpenAI 上游上完成一次读写文件」——本会话的安全策略禁止我使用任何真实 Key（内联进命令与写进文件都拦），所以我录不到真实分片流、也接不了真 Claude Code；fixture 是按 OpenAI 官方 wire 格式手写的，不是录制的。这一条留给他本人跑（README「仍然开着」）。红灯 5 组（各自只让对应测试红）：① 块索引不递增 → 2 条配对测试；② 不等 name 就开块 → A_tool_block_waits_for_the_name_before_opening；③ 收尾不补 content_block_stop → 3 条块生命周期测试；④ message_delta 的 usage 写死 0 → The_final_usage…；⑤ 改成 ResponseContentRead（先读完再写）→ 只有增量到达那条，且它直接挂到客户端超时（实测 101 秒）。",
+      "scopeNotes": "这是「一种协议没有、另一种强制要求」的信息，不是接口不匹配。需要你提供 OpenAI Key——本会话拿不到。实现期我定的策略，可推翻：① **未完成的 arguments 原样发出**，不补右括号、不丢调用（Anthropic 自己在 max_tokens 截断工具调用时也是这个行为，stop_reason 给 max_tokens）；非流式路径拿得到完整字符串，那里坏 JSON 退化成 {}——这条不对称是刻意的；② message_start 的 usage 先报 0、真实 input/output_tokens 在 message_delta 补正（上游 usage 只在末尾那个 choices:[] 分片里，RISK-03）；③ 名称到齐才开工具块，先到的 arguments 分片缓存、开块时一次补发；④ 开工具块前先关掉打开着的文本块，收尾按块号顺序补齐所有 content_block_stop。所有流式状态放在每请求的 OpenAiStreamSession 里，没有 static（RISK-05，并发会话不串流）。",
       "blockedBy": ["S11"],
-      "techGuidance": null
+      "techGuidance": "SSE 用 StreamReader.ReadLineAsync 逐行读，只认 data: 行（[DONE]、空行、event: 与注释都跳过）；JsonNode.Parse 失败就丢那一行。整数类型仍要注意：JsonNode.Parse 出来的整数是 JsonElement 背板、自己 Create 出来的是具体类型，测试用 GetValue<long>() 取 message_start 里写的 0 会抛，所以 message_start 的 usage 零值一律写成 0L。"
     },
     {
       "id": "S13",

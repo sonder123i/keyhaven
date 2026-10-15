@@ -77,7 +77,7 @@ internal sealed class ProvidersViewModel : ObservableObject
     public static string KindText(UpstreamKind kind) => kind switch
     {
         UpstreamKind.Anthropic => "Anthropic 兼容（直通）",
-        _ => "OpenAI（翻译，暂不支持流式）",
+        _ => "OpenAI（翻译）",
     };
 
     public void New()

@@ -55,9 +55,7 @@ internal sealed class OpenAiTranslationForwarder(
 
         if (body["stream"]?.GetValue<bool>() == true)
         {
-            Mark(context, RunLogOutcome.Completed);
-            await Fail(context, StatusCodes.Status501NotImplemented, "api_error",
-                "Streaming responses from an OpenAI upstream are not supported yet.");
+            await StreamAsync(context, route, body);
             return;
         }
 
@@ -115,6 +113,107 @@ internal sealed class OpenAiTranslationForwarder(
             await context.Response.WriteAsync(message.ToJsonString(BodyJson), aborted);
             Mark(context, RunLogOutcome.Completed);
         }
+    }
+
+    // The streaming path: read the upstream's SSE lines, run each chunk through a per-request session and write the
+    // Anthropic frames back with a flush per upstream chunk. Any buffering here and Claude Code stops seeing increments.
+    private async Task StreamAsync(HttpContext context, UpstreamRoute route, JsonObject body)
+    {
+        var aborted = context.RequestAborted;
+        var state = RunRequestState.For(context)!;
+        var started = Clock.Elapsed;
+        using var request = BuildUpstreamRequest(context.Request, route, requestTranslator.TranslateRequest(body, route.Model));
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await clients.CreateClient(UpstreamRequest.ClientName)
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, aborted);
+        }
+        catch (OperationCanceledException) when (aborted.IsCancellationRequested)
+        {
+            Mark(context, RunLogOutcome.ClientAborted);
+            return;
+        }
+        catch (CryptographicException)
+        {
+            Mark(context, RunLogOutcome.Completed);
+            await Fail(context, StatusCodes.Status503ServiceUnavailable, "api_error",
+                $"The stored key for '{route.ProviderId}' cannot be decrypted under this Windows account. Enter the key again.");
+            return;
+        }
+        catch (HttpRequestException)
+        {
+            Mark(context, RunLogOutcome.Completed);
+            await Fail(context, StatusCodes.Status502BadGateway, "api_error", $"Could not reach the upstream at {route.BaseUrl.Host}.", retryable: true);
+            return;
+        }
+
+        using (response)
+        {
+            if (!response.IsSuccessStatusCode)
+            {
+                var payload = await response.Content.ReadAsStringAsync(aborted);
+                state.FirstByte ??= Clock.Elapsed - started;
+                ForwardStatusHeaders(response, context);
+                Mark(context, RunLogOutcome.Completed);
+                await FailFromUpstream(context, response.StatusCode, payload);
+                return;
+            }
+
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            context.Response.ContentType = "text/event-stream";
+            var session = new OpenAiStreamSession(route.Model);
+
+            try
+            {
+                await using var source = await response.Content.ReadAsStreamAsync(aborted);
+                using var reader = new StreamReader(source);
+                while (await reader.ReadLineAsync(aborted) is { } line)
+                {
+                    // Only data lines carry payload; blank separators, event: names and comments are dropped.
+                    if (!line.StartsWith("data:", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    var payload = line[5..].TrimStart();
+                    state.FirstByte ??= Clock.Elapsed - started;
+                    if (payload == "[DONE]")
+                    {
+                        break;
+                    }
+
+                    if (JsonNode.Parse(payload) is JsonObject chunk)
+                    {
+                        await EmitAsync(context.Response, session.OnChunk(chunk), aborted);
+                    }
+                }
+
+                await EmitAsync(context.Response, session.OnEnd(), aborted);
+                Mark(context, RunLogOutcome.Completed);
+            }
+            catch (OperationCanceledException) when (aborted.IsCancellationRequested)
+            {
+                Mark(context, RunLogOutcome.ClientAborted);
+            }
+            catch (IOException)
+            {
+                // Upstream died mid-stream after headers went out; the client just sees the stream end.
+                Mark(context, RunLogOutcome.UpstreamInterrupted);
+                throw;
+            }
+        }
+    }
+
+    private static async Task EmitAsync(HttpResponse response, IReadOnlyList<AnthropicStreamEvent> events, CancellationToken cancellationToken)
+    {
+        foreach (var streamEvent in events)
+        {
+            await response.WriteAsync(streamEvent.ToSse(), cancellationToken);
+        }
+
+        await response.Body.FlushAsync(cancellationToken);
     }
 
     private static HttpRequestMessage BuildUpstreamRequest(HttpRequest inbound, UpstreamRoute route, JsonObject body)
