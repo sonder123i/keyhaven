@@ -44,9 +44,16 @@ public static class AiGatewayServiceCollectionExtensions
         // Remove the client's built-in loggers: at Trace level they record request headers, and RedactLoggedHeaders only
         // masks the formatted text — the structured log state still carries the real key verbatim (both measured).
         // No client-side timeout: the default 100 s would cut off long non-streaming answers; cancellation comes from the caller.
+        // No proxy inheritance: a system/env proxy would silently reroute every request — including the one carrying the
+        // injected real key — so it would leave the machine through the proxy process instead of going straight to the
+        // upstream. The client opts out explicitly (guardrail: Upstream_client_opts_out_of_proxy_inheritance).
         services.AddHttpClient(UpstreamRequest.ClientName)
             .ConfigureHttpClient(client => client.Timeout = Timeout.InfiniteTimeSpan)
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                UseProxy = false,
+            })
             .RemoveAllLoggers();
 
         return services;

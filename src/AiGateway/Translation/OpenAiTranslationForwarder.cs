@@ -38,17 +38,17 @@ internal sealed class OpenAiTranslationForwarder(
         // OpenAI has no token-counting endpoint. A 404 makes Claude Code fall back to its character estimate (RISK-04).
         if (context.Request.Path == CountTokensPath)
         {
-            Mark(context, RunLogOutcome.Completed);
-            await Fail(context, StatusCodes.Status404NotFound, "not_found_error",
+            UpstreamForwarding.Mark(context, RunLogOutcome.Completed);
+            await UpstreamForwarding.Fail(context, StatusCodes.Status404NotFound, "not_found_error",
                 "count_tokens is not available for an OpenAI upstream; the client estimates by characters instead.");
             return;
         }
 
-        var body = await ReadJsonObject(context.Request, aborted);
+        var body = await UpstreamForwarding.ReadJsonObject(context.Request, aborted);
         if (body is null)
         {
-            Mark(context, RunLogOutcome.Completed);
-            await Fail(context, StatusCodes.Status400BadRequest, "invalid_request_error", "Request body must be a JSON object.");
+            UpstreamForwarding.Mark(context, RunLogOutcome.Completed);
+            await UpstreamForwarding.Fail(context, StatusCodes.Status400BadRequest, "invalid_request_error", "Request body must be a JSON object.");
             return;
         }
 
@@ -70,20 +70,20 @@ internal sealed class OpenAiTranslationForwarder(
         }
         catch (OperationCanceledException) when (aborted.IsCancellationRequested)
         {
-            Mark(context, RunLogOutcome.ClientAborted);
+            UpstreamForwarding.Mark(context, RunLogOutcome.ClientAborted);
             return;
         }
         catch (CryptographicException)
         {
-            Mark(context, RunLogOutcome.Completed);
-            await Fail(context, StatusCodes.Status503ServiceUnavailable, "api_error",
+            UpstreamForwarding.Mark(context, RunLogOutcome.Completed);
+            await UpstreamForwarding.Fail(context, StatusCodes.Status503ServiceUnavailable, "api_error",
                 $"The stored key for '{route.ProviderId}' cannot be decrypted under this Windows account. Enter the key again.");
             return;
         }
         catch (HttpRequestException)
         {
-            Mark(context, RunLogOutcome.Completed);
-            await Fail(context, StatusCodes.Status502BadGateway, "api_error", $"Could not reach the upstream at {route.BaseUrl.Host}.", retryable: true);
+            UpstreamForwarding.Mark(context, RunLogOutcome.Completed);
+            await UpstreamForwarding.Fail(context, StatusCodes.Status502BadGateway, "api_error", $"Could not reach the upstream at {route.BaseUrl.Host}.", retryable: true);
             return;
         }
 
@@ -94,7 +94,7 @@ internal sealed class OpenAiTranslationForwarder(
 
             if (!response.IsSuccessStatusCode)
             {
-                Mark(context, RunLogOutcome.Completed);
+                UpstreamForwarding.Mark(context, RunLogOutcome.Completed);
                 await FailFromUpstream(context, response.StatusCode, TryParseObject(responseBody));
                 return;
             }
@@ -103,10 +103,10 @@ internal sealed class OpenAiTranslationForwarder(
             var message = completion is null ? null : responseTranslator.TranslateMessage(completion, route.Model);
             if (message is null)
             {
-                Mark(context, RunLogOutcome.Completed);
+                UpstreamForwarding.Mark(context, RunLogOutcome.Completed);
                 // A 200 whose body is not JSON (a misconfigured BaseUrl landing on an HTML page) is the upstream's
                 // problem, not an unhandled crash: say so in the shape the client can read.
-                await Fail(context, StatusCodes.Status502BadGateway, "api_error",
+                await UpstreamForwarding.Fail(context, StatusCodes.Status502BadGateway, "api_error",
                     completion is null
                         ? "The OpenAI upstream returned a body that is not a JSON object."
                         : "The OpenAI upstream returned a response with no completion choices.");
@@ -116,7 +116,7 @@ internal sealed class OpenAiTranslationForwarder(
             context.Response.StatusCode = StatusCodes.Status200OK;
             context.Response.ContentType = "application/json";
             await context.Response.WriteAsync(message.ToJsonString(BodyJson), aborted);
-            Mark(context, RunLogOutcome.Completed);
+            UpstreamForwarding.Mark(context, RunLogOutcome.Completed);
         }
     }
 
@@ -137,20 +137,20 @@ internal sealed class OpenAiTranslationForwarder(
         }
         catch (OperationCanceledException) when (aborted.IsCancellationRequested)
         {
-            Mark(context, RunLogOutcome.ClientAborted);
+            UpstreamForwarding.Mark(context, RunLogOutcome.ClientAborted);
             return;
         }
         catch (CryptographicException)
         {
-            Mark(context, RunLogOutcome.Completed);
-            await Fail(context, StatusCodes.Status503ServiceUnavailable, "api_error",
+            UpstreamForwarding.Mark(context, RunLogOutcome.Completed);
+            await UpstreamForwarding.Fail(context, StatusCodes.Status503ServiceUnavailable, "api_error",
                 $"The stored key for '{route.ProviderId}' cannot be decrypted under this Windows account. Enter the key again.");
             return;
         }
         catch (HttpRequestException)
         {
-            Mark(context, RunLogOutcome.Completed);
-            await Fail(context, StatusCodes.Status502BadGateway, "api_error", $"Could not reach the upstream at {route.BaseUrl.Host}.", retryable: true);
+            UpstreamForwarding.Mark(context, RunLogOutcome.Completed);
+            await UpstreamForwarding.Fail(context, StatusCodes.Status502BadGateway, "api_error", $"Could not reach the upstream at {route.BaseUrl.Host}.", retryable: true);
             return;
         }
 
@@ -160,7 +160,7 @@ internal sealed class OpenAiTranslationForwarder(
             {
                 ForwardStatusHeaders(response, context);
                 using var error = await ReadBodyAsync(response, state, started, aborted);
-                Mark(context, RunLogOutcome.Completed);
+                UpstreamForwarding.Mark(context, RunLogOutcome.Completed);
                 await FailFromUpstream(context, response.StatusCode, TryParseObject(error));
                 return;
             }
@@ -170,8 +170,8 @@ internal sealed class OpenAiTranslationForwarder(
             // failure to diagnose — so refuse it loudly instead of answering nothing.
             if (!string.Equals(response.Content.Headers.ContentType?.MediaType, "text/event-stream", StringComparison.OrdinalIgnoreCase))
             {
-                Mark(context, RunLogOutcome.Completed);
-                await Fail(context, StatusCodes.Status502BadGateway, "api_error",
+                UpstreamForwarding.Mark(context, RunLogOutcome.Completed);
+                await UpstreamForwarding.Fail(context, StatusCodes.Status502BadGateway, "api_error",
                     "The upstream did not return an event stream for a streaming request.");
                 return;
             }
@@ -208,16 +208,16 @@ internal sealed class OpenAiTranslationForwarder(
                 }
 
                 await EmitAsync(context.Response, session.OnEnd(), aborted);
-                Mark(context, RunLogOutcome.Completed);
+                UpstreamForwarding.Mark(context, RunLogOutcome.Completed);
             }
             catch (OperationCanceledException) when (aborted.IsCancellationRequested)
             {
-                Mark(context, RunLogOutcome.ClientAborted);
+                UpstreamForwarding.Mark(context, RunLogOutcome.ClientAborted);
             }
             catch (IOException)
             {
                 // Upstream died mid-stream after headers went out; the client just sees the stream end.
-                Mark(context, RunLogOutcome.UpstreamInterrupted);
+                UpstreamForwarding.Mark(context, RunLogOutcome.UpstreamInterrupted);
                 throw;
             }
         }
@@ -332,31 +332,5 @@ internal sealed class OpenAiTranslationForwarder(
         {
             return null;
         }
-    }
-
-    private static void Mark(HttpContext context, RunLogOutcome outcome) => RunRequestState.For(context)!.Outcome = outcome;
-
-    private static async Task<JsonObject?> ReadJsonObject(HttpRequest request, CancellationToken cancellationToken)
-    {
-        using var buffer = new MemoryStream();
-        await request.Body.CopyToAsync(buffer, cancellationToken);
-        try
-        {
-            return JsonNode.Parse(buffer.GetBuffer().AsSpan(0, (int)buffer.Length)) as JsonObject;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    private static Task Fail(HttpContext context, int statusCode, string type, string message, bool retryable = false)
-    {
-        if (!retryable)
-        {
-            context.Response.Headers["x-should-retry"] = "false";
-        }
-
-        return AnthropicErrors.Create(statusCode, type, message).ExecuteAsync(context);
     }
 }

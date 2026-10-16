@@ -33,18 +33,18 @@ internal sealed class PassthroughForwarder(IHttpClientFactory clients)
         state.Provider = resolved.ProviderId;
         if (resolved.Route is not { } route)
         {
-            Mark(context, RunLogOutcome.Completed);
-            await Fail(context, StatusCodes.Status503ServiceUnavailable, "api_error", resolved.Problem!);
+            UpstreamForwarding.Mark(context, RunLogOutcome.Completed);
+            await UpstreamForwarding.Fail(context, StatusCodes.Status503ServiceUnavailable, "api_error", resolved.Problem!);
             return;
         }
 
         state.Model = route.Model;
 
-        var body = await ReadJsonObject(context.Request, aborted);
+        var body = await UpstreamForwarding.ReadJsonObject(context.Request, aborted);
         if (body is null)
         {
-            Mark(context, RunLogOutcome.Completed);
-            await Fail(context, StatusCodes.Status400BadRequest, "invalid_request_error", "Request body must be a JSON object.");
+            UpstreamForwarding.Mark(context, RunLogOutcome.Completed);
+            await UpstreamForwarding.Fail(context, StatusCodes.Status400BadRequest, "invalid_request_error", "Request body must be a JSON object.");
             return;
         }
 
@@ -60,20 +60,20 @@ internal sealed class PassthroughForwarder(IHttpClientFactory clients)
         }
         catch (OperationCanceledException) when (aborted.IsCancellationRequested)
         {
-            Mark(context, RunLogOutcome.ClientAborted);
+            UpstreamForwarding.Mark(context, RunLogOutcome.ClientAborted);
             return;
         }
         catch (CryptographicException)
         {
-            Mark(context, RunLogOutcome.Completed);
-            await Fail(context, StatusCodes.Status503ServiceUnavailable, "api_error",
+            UpstreamForwarding.Mark(context, RunLogOutcome.Completed);
+            await UpstreamForwarding.Fail(context, StatusCodes.Status503ServiceUnavailable, "api_error",
                 $"The stored key for '{route.ProviderId}' cannot be decrypted under this Windows account. Enter the key again.");
             return;
         }
         catch (HttpRequestException)
         {
-            Mark(context, RunLogOutcome.Completed);
-            await Fail(context, StatusCodes.Status502BadGateway, "api_error", $"Could not reach the upstream at {route.BaseUrl.Host}.", retryable: true);
+            UpstreamForwarding.Mark(context, RunLogOutcome.Completed);
+            await UpstreamForwarding.Fail(context, StatusCodes.Status502BadGateway, "api_error", $"Could not reach the upstream at {route.BaseUrl.Host}.", retryable: true);
             return;
         }
 
@@ -97,35 +97,19 @@ internal sealed class PassthroughForwarder(IHttpClientFactory clients)
             try
             {
                 await StreamBody(response, context.Response, aborted, state, started);
-                Mark(context, RunLogOutcome.Completed);
+                UpstreamForwarding.Mark(context, RunLogOutcome.Completed);
             }
             catch (OperationCanceledException) when (aborted.IsCancellationRequested)
             {
-                Mark(context, RunLogOutcome.ClientAborted);
+                UpstreamForwarding.Mark(context, RunLogOutcome.ClientAborted);
             }
             catch (IOException)
             {
                 // Upstream died mid-stream after headers went out: the response can no longer be replaced,
                 // so record the break and let the client see the connection end. Never log the exception itself.
-                Mark(context, RunLogOutcome.UpstreamInterrupted);
+                UpstreamForwarding.Mark(context, RunLogOutcome.UpstreamInterrupted);
                 throw;
             }
-        }
-    }
-
-    private static void Mark(HttpContext context, RunLogOutcome outcome) => RunRequestState.For(context)!.Outcome = outcome;
-
-    private static async Task<JsonObject?> ReadJsonObject(HttpRequest request, CancellationToken cancellationToken)
-    {
-        using var buffer = new MemoryStream();
-        await request.Body.CopyToAsync(buffer, cancellationToken);
-        try
-        {
-            return JsonNode.Parse(buffer.GetBuffer().AsSpan(0, (int)buffer.Length)) as JsonObject;
-        }
-        catch (JsonException)
-        {
-            return null;
         }
     }
 
@@ -178,17 +162,5 @@ internal sealed class PassthroughForwarder(IHttpClientFactory clients)
         {
             ArrayPool<byte>.Shared.Return(buffer);
         }
-    }
-
-    // Claude Code retries 5xx for about three minutes before showing anything (S8 measured 174 s); a gateway
-    // configuration problem is not transient, so say so and let the message reach the user at once.
-    private static Task Fail(HttpContext context, int statusCode, string type, string message, bool retryable = false)
-    {
-        if (!retryable)
-        {
-            context.Response.Headers["x-should-retry"] = "false";
-        }
-
-        return AnthropicErrors.Create(statusCode, type, message).ExecuteAsync(context);
     }
 }
