@@ -2,6 +2,8 @@
 
 <img src="src/AiGateway.App/Assets/keyhaven.png" alt="钥湾 Keyhaven 图标" width="128">
 
+[![CI](https://github.com/sonder123i/keyhaven/actions/workflows/ci.yml/badge.svg)](https://github.com/sonder123i/keyhaven/actions/workflows/ci.yml)
+
 > 新会话的入口。只交代**到哪了、先读什么、为什么**；架构细节在 `docs/architecture/`。
 
 **License：MIT**（见 `LICENSE`）。**平台：Windows 10/11 + .NET 8。** 这是一个本地小工具：把 Claude Code 的 `ANTHROPIC_BASE_URL` 指向本机，它替你保管真实上游 Key 并转给上游。
@@ -33,6 +35,8 @@ C# / .NET 8 WPF 桌面应用。Claude Code 把 `ANTHROPIC_BASE_URL` 指向本机
 
 ## 快速开始
 
+**只想用、不想编译**：到 [Releases](https://github.com/sonder123i/keyhaven/releases/latest) 下载 `keyhaven-*-win-x64.zip`，解压双击 `AiGateway.App.exe`（目标机需 [.NET 8 Desktop + ASP.NET Core 运行时](https://dotnet.microsoft.com/download/dotnet/8.0)，详见 `docs/install.md`）。想改代码继续往下：
+
 ```powershell
 git clone https://github.com/sonder123i/keyhaven.git
 cd ai-gateway
@@ -61,7 +65,7 @@ dotnet test -c Release   # 168 个测试
 ## 先读这些（按顺序）
 
 1. `docs/architecture/ai-gateway.architecture-understanding.md` —— 决策 D1–D16、不做清单、外部事实（带网址）、两条脊柱、安全梯子。
-2. `docs/architecture/ai-gateway.structurizr.dsl` —— 真相源，L1/L2/L3 三视图，15 个组件。2026-10-15 用 Structurizr CLI v2025.11.09 解析通过；S13 的改动没重跑 `validate`（CLI 下载被拦），但过了结构自检：花括号配平、描述里无尖括号、无死样式、无 `Milestone2` 残留。
+2. `docs/architecture/ai-gateway.structurizr.dsl` —— 真相源，L1/L2/L3 三视图，15 个组件。2026-10-15 用 Structurizr CLI v2025.11.09 解析通过；S13 的改动没重跑 `validate`，但过了结构自检：花括号配平、描述里无尖括号、无死样式、无 `Milestone2` 残留。
 3. `docs/architecture/ai-gateway.dependency-impact-findings.md` —— 为什么是 3 + 1 个项目、十一条护栏、S1 实测教训、两扇后门、UI 层的守法、变更影响。
 4. `docs/architecture/ai-gateway.request-flow.dot` —— 一次请求：鉴权 → 路由 → 直通 / 翻译 → 注入 → 上游。
 5. `docs/architecture/ai-gateway.dependencies.dot` —— 程序集引用、运行时装配、禁止边。
@@ -106,10 +110,10 @@ dotnet test -c Release   # 168 个测试
 
 ## 仍然开着
 
-- 交互式会话（Esc / Ctrl+C 中止、长会话的上下文压缩）没有自动化覆盖——S8 只能用 `-p` 模式跑，需要你自己用一次。
+- 交互式会话（Esc / Ctrl+C 中止、长会话的上下文压缩）没有自动化覆盖——S8 只能用 `-p` 模式跑，需要人工跑一次。
 - **OpenAI 上游怎么填**：类型选「OpenAI」、地址填 API 根（网关在其后追加 `/chat/completions`；例如 DeepSeek 填 `https://api.deepseek.com`、OpenAI 填 `https://api.openai.com/v1`）；真实 Key 以 `Authorization: Bearer` 注入，不是 `x-api-key`。MiMo 的 `mimo-v2.6-pro` 已实测通过（§9）。
 - **M2 真机验收：已通过（2026-10-15）** —— 真 Claude Code → 网关 → MiMo（OpenAI 协议 ⇒ 翻译路径），工具调用往返成功，记录与数字见 `evidence.md` §9。仍然开着的是真机上的**交互式会话**（Esc / Ctrl+C、上下文压缩），一直需要人工跑。
-- **S14 的「拉取模型」还等你点一次**：「测试连接」你已点过，报「地址可达：HTTP 404，往返 117 ms」（404 是预期——base URL 本身不是资源，`evidence.md` §11）；「拉取模型」只验到"按钮在界面树里、绑定生效"，没代你点（UIA 点击不稳）。对 OpenAI 类上游点一下，该把模型名填进「模型」框。
+- **S14 的「拉取模型」还没真机点验**：「测试连接」已验过，报「地址可达：HTTP 404，往返 117 ms」（404 是预期——base URL 本身不是资源，`evidence.md` §11）；「拉取模型」只验到"按钮在界面树里、绑定生效"。对 OpenAI 类上游点一下，该把模型名填进「模型」框。
 
 ## 贡献与反馈
 
