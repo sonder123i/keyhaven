@@ -96,7 +96,7 @@ dotnet test -c Release   # 168 个测试
 ## 环境与工具（已就绪）
 
 - .NET SDK `8.0.426`（`global.json` 钉住）；Graphviz `16.1.0`（`C:\Program Files\Graphviz\bin\dot.exe`）。
-- git：仓库 `sonder123i/ai-gateway`，push 走 `ssh://git@ssh.github.com:443/...`。
+- git：仓库 `sonder123i/keyhaven`，push 走 `ssh://git@ssh.github.com:443/...`。
 - 校验 DSL：`gh release download v2025.11.09 -R structurizr/cli -p structurizr-cli.zip`，解压后
   `java -cp "cli/lib/*" com.structurizr.cli.StructurizrCliApplication validate -workspace docs/architecture/ai-gateway.structurizr.dsl`
   （本机 JDK 25 可跑；CLI 94MB，用完即删，不进仓库）。DSL 描述里别写尖括号（`<port>` 这类会让导出的 DOT 渲染失败）。
