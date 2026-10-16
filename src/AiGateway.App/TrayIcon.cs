@@ -23,7 +23,7 @@ internal sealed class TrayIcon : IDisposable
     private readonly Icon _iconIdle;
     private bool _disposed;
 
-    public TrayIcon(Action open, Func<Task> exit, ActivationViewModel activation, Uri gatewayAddress)
+    public TrayIcon(Action open, Func<Task> exit, Func<Task> checkUpdate, ActivationViewModel activation, Uri gatewayAddress)
     {
         _activation = activation;
         _address = ClaudeCodeSnippet.BaseUrl(gatewayAddress);
@@ -38,6 +38,7 @@ internal sealed class TrayIcon : IDisposable
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add("打开", null, (_, _) => open());
         _menu.Items.Add("复制网关地址", null, (_, _) => ClipboardText.TryCopy(_address));
+        _menu.Items.Add("检查更新", null, async (_, _) => await checkUpdate());
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add("退出", null, async (_, _) => await exit());
 

@@ -63,7 +63,7 @@ public partial class App : Application
         var vm = new MainViewModel(_server.Services, _server.BaseAddress!);
         _window = new MainWindow(vm);
         _window.Closing += HideInsteadOfClosing;
-        _tray = new TrayIcon(ShowWindow, ExitAsync, vm.Activation, _server.BaseAddress!);
+        _tray = new TrayIcon(ShowWindow, ExitAsync, _window.ManualCheckUpdateAsync, vm.Activation, _server.BaseAddress!);
         _window.Show();
     }
 

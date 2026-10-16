@@ -31,6 +31,16 @@ dotnet publish src/AiGateway.App/AiGateway.App.csproj -p:PublishProfile=Release-
 
 默认不装开机自启（2026-10-15 决定）。要开机就自己跑，把 `AiGateway.App.exe` 的快捷方式丢进 `shell:startup` 即可（Win+R 输入 `shell:startup`）。
 
+## 更新（换版本）
+
+配置和密钥在 `%LOCALAPPDATA%\AiGateway\config.json`，不跟程序目录走，换版本不动它们（DPAPI 密文跟 Windows 用户绑定、不跟版本绑定，覆盖程序后照样解得开）：
+
+1. 托盘图标右键「退出」。
+2. 下载新版 zip，解压后**整个目录覆盖**旧的 9 个文件。
+3. 双击 `AiGateway.App.exe`。
+
+应用启动后会匿名查一次 GitHub Releases 看有没有新版（只查询、不下载、不上传任何信息），有新版时设置页「版本」行旁会出现「有新版 →」；托盘菜单的「检查更新」可随时手动查。
+
 ## 卸载
 
 删掉程序目录，再删 `%LOCALAPPDATA%\AiGateway\`——`config.json` 里存着上游 Key 的 DPAPI 密文与代理密钥的哈希，删掉即彻底清除。

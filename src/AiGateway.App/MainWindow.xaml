@@ -599,8 +599,14 @@
                     </StackPanel>
 
                     <TextBlock Grid.Row="3" Text="版本" Style="{DynamicResource FieldLabel}" Margin="0,14,12,0" />
-                    <TextBlock x:Name="VersionText" Grid.Row="3" Grid.Column="1" Margin="0,14,0,0" VerticalAlignment="Center"
-                               Style="{DynamicResource Data}" Foreground="{DynamicResource Ink.Muted}" />
+                    <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
+                        <TextBlock x:Name="VersionText" VerticalAlignment="Center"
+                                   Style="{DynamicResource Data}" Foreground="{DynamicResource Ink.Muted}" />
+                        <!-- 更新只做提示不做自更（D17）：真有新版才现身，点了去下载页手动下 -->
+                        <Button x:Name="UpdateHintButton" Visibility="Collapsed" Margin="12,0,0,0" Padding="10,3"
+                                Click="OnOpenDownloadPage"
+                                ToolTip="启动后会匿名查一次 GitHub Releases 看有没有新版：只查询、不下载、不上传任何信息。" />
+                    </StackPanel>
 
                     <TextBlock x:Name="SettingsMessage" Grid.Row="4" Grid.ColumnSpan="2" Text="{Binding Settings.Message}">
                         <TextBlock.Style>

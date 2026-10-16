@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -10,6 +11,7 @@ public partial class MainWindow : Window
 {
     private readonly MainViewModel _vm;
     private readonly DispatcherTimer _logTimer;
+    private Uri? _updateUrl;
 
     internal MainWindow(MainViewModel vm)
     {
@@ -17,6 +19,7 @@ public partial class MainWindow : Window
         DataContext = _vm = vm;
         _vm.RunLog.Refresh();
         VersionText.Text = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "";
+        _ = CheckOnStartupAsync();
         StateChanged += (_, _) => SyncMaximizeGlyph();
 
         // Poll while the log tab is on screen; the request path never pushes into the UI (FORBIDDEN-04).
@@ -163,6 +166,76 @@ public partial class MainWindow : Window
     // 复制接入片段：同一个理由走 ClipboardText；两处复制共用一个「已复制/没成功」提示
     private void OnCopySnippet(object sender, RoutedEventArgs e) =>
         _vm.Settings.ReportCopied(ClipboardText.TryCopy(_vm.Settings.AddressSnippet));
+
+    // ---- 更新（D17：只提示、不自更；查一次 GitHub Releases 是本应用唯一一处非上游外呼）----
+
+    private static Version CurrentVersion => typeof(MainWindow).Assembly.GetName().Version ?? new Version(0, 0, 0);
+
+    // 启动后静默查一次：断网 / 限流 / 没新版一律闭嘴，只有真有新版才在版本行旁亮提示。
+    private async Task CheckOnStartupAsync() => ApplyUpdateHint(await RunUpdateCheckAsync());
+
+    // 托盘「检查更新」走这里：手动发起的必须给回话。它是 async 回调入口，任何异常都不许逃出去杀进程。
+    internal async Task ManualCheckUpdateAsync()
+    {
+        try
+        {
+            var result = await RunUpdateCheckAsync();
+            ApplyUpdateHint(result);
+
+            if (result.Status == UpdateCheck.Status.UpdateAvailable)
+            {
+                if (Confirm($"发现新版 v{result.LatestVersion}（当前 v{CurrentVersion.ToString(3)}）。打开下载页？"))
+                {
+                    OpenDownloadPage();
+                }
+            }
+            else if (result.Status == UpdateCheck.Status.UpToDate)
+            {
+                MessageBox.Show(this, $"已是最新版本（v{CurrentVersion.ToString(3)}）。", Title, MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            else
+            {
+                MessageBox.Show(this, "检查更新失败：网络不可达或 GitHub 限流，稍后再试。", Title, MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        catch (Exception)
+        {
+            // async 回调边界兜底：这一层逃出去会直接杀掉进程，静默好过崩溃。
+        }
+    }
+
+    private static async Task<UpdateCheck.Result> RunUpdateCheckAsync()
+    {
+        using var http = UpdateCheck.NewClient(CurrentVersion);
+        return await UpdateCheck.RunAsync(http, CurrentVersion);
+    }
+
+    private void ApplyUpdateHint(UpdateCheck.Result result)
+    {
+        if (result.Status != UpdateCheck.Status.UpdateAvailable)
+        {
+            return;
+        }
+
+        _updateUrl = result.ReleaseUrl ?? UpdateCheck.DownloadPage;
+        UpdateHintButton.Content = $"有新版 v{result.LatestVersion} →";
+        UpdateHintButton.Visibility = Visibility.Visible;
+    }
+
+    private void OnOpenDownloadPage(object sender, RoutedEventArgs e) => OpenDownloadPage();
+
+    private void OpenDownloadPage()
+    {
+        var target = _updateUrl ?? UpdateCheck.DownloadPage;
+        try
+        {
+            Process.Start(new ProcessStartInfo(target.ToString()) { UseShellExecute = true });
+        }
+        catch (Exception)
+        {
+            MessageBox.Show(this, "浏览器没能打开，下载页地址是：\n" + target, Title, MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
 
     // Every confirm guards something irreversible, so a stray Enter must answer No.
     private bool Confirm(string question) =>
