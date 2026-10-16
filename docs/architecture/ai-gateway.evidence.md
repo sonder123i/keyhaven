@@ -229,3 +229,35 @@ DSL 的 15 个组件已全部落地。行号取**类声明行**（会随改动�
 **没验到的**：按钮**点击**后的行为（UIA 点击不稳，没代点）——留给用户点一次，写在 README「仍然开着」。
 
 **教训**：UI 故事的验收不能只靠 `dotnet test`；"按进程找窗口 + 导出界面树"是最便宜的绑定体检，成本约一次脚本。中文名不要写进脚本（控制台是 GBK），把结果写成 UTF-8 文件再读。
+
+## 12. 终审仲裁与修复（2026-10-16，6 份评估报告核查）
+
+**为什么要单独记**：同一天有 6 份外部评估报告（根目录 5 份 + `docs/2026-10-15-综合评估报告.md`）。逐条核查后只动手改**被代码或实测证实**的部分，其余标为"无法核实"或"待定性"。
+
+| 主张 | 结论 | 证据 / 修法 |
+| --- | --- | --- |
+| 上游 HttpClient 隐式继承 HTTP_PROXY | **证实并修复** | 原 `AiGatewayServiceCollectionExtensions.cs:49` 只设 `AllowAutoRedirect`；加 `UseProxy = false`，并加护栏 `Upstream_client_opts_out_of_proxy_inheritance` |
+| 翻译路径中止无专题测试（RISK-06） | **证实并补测** | violations.csv 原写"没有专题测试，本轮未闭环"；新增 `TranslationTests.Client_hanging_up_cancels_the_upstream_request_in_translation`，台账转 CLOSED |
+| 两转发器三处方法逐字重复 | **证实并抽取** | `Mark`/`ReadJsonObject`/`Fail` 逐字相同 → 抽到 `Hosting/UpstreamForwarding.cs`；构造函数签名未动（护栏⑪钉住） |
+| 文档计数漂移 | **证实并修正** | README 原写"13 个故事"/"144 或 163 测试"；实测 plan JSON 14 条、`dotnet test` 166 用例，已对齐 |
+| 无 `<Version>` | **证实并补** | 三个 csproj 加 `1.0.0` |
+| 无 CI | **证实并补** | `.github/workflows/ci.yml`（windows-latest，显式清代理变量，避免假红） |
+| max_tokens 原样映射致新 OpenAI 模型 400 | **无法核实**（无真机样本） | `AnthropicToOpenAiTranslator.cs:18` 确有 `Copy(..., "max_tokens")`；但无 400 实测 → 保持 P2，待定 |
+| RISK-19 / RISK-20 | **无法核实为真实痛点** | 只有 cc-switch 源码对照，无本机复现样本；不进本次修复 |
+
+**红灯演示**：移除 `UseProxy = false` 后 `Upstream_client_opts_out_of_proxy_inheritance` 立即变红（`Assert.Contains` 找不到子串），恢复后 166/166 绿。
+
+**没做的**：`structurizr validate`（CLI 下载仍被会话策略拦下）、max_tokens 真机定性（需一把 OpenAI Key）。
+
+## 13. 开源发布决策（2026-10-16）
+
+M1 达成后作者决定开源公开（此前 README 写"公不公开由你定"，现为定论）。
+
+| 决策 | 选择 | 理由 |
+| --- | --- | --- |
+| 许可证 | **MIT** | 最通用、与同类工具（cc-switch MIT）一致；本项目是自用小工具，不需 Apache 的专利条款或 AGPL 的强 copyleft |
+| 评估材料 | **不纳入、本地删除** | 6 份 AI 评估报告属外部评审材料，不属于产品；开源仓库放 AI 互评会显得杂乱 |
+| README | **只保留中文** | 目标受众是中文用户（Claude Code + 国内上游） |
+| 一键预设厂家 | **只留 4 条厂家本体** | 去掉 MiMo 两条预设：预设只放地址不会变的官方厂家；MiMo 按 README 手填 `https://api.xiaomimimo.com/v1`（M2 已实测，见 §9）。README 的 MiMo 单独指引同步移除，避免与预设表不一致 |
+| 依赖锁定 | **提交 `packages.lock.json`** | fresh clone 必须解析出同一份依赖图 |
+| CI | **`--locked-mode` + 清代理变量** | lock 校验 + 规避历史上 HTTP_PROXY 导致的假失败 |
