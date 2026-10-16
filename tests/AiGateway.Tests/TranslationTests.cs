@@ -320,4 +320,39 @@ public class TranslationTests
             await Task.Delay(25);
         }
     }).WaitAsync(TimeSpan.FromSeconds(10));
+
+    // RISK-06: Translation path cancellation must be tested explicitly (passthrough has it, but translation did not).
+    [Fact]
+    public async Task Client_hanging_up_cancels_the_upstream_request_in_translation()
+    {
+        var upstreamSawCancel = new TaskCompletionSource();
+        
+        await using var gw = await GatewayHarness.StartAsync(async context =>
+        {
+            // Simulate an OpenAI-compatible upstream that sends SSE
+            context.Response.ContentType = "text/plain"; // OpenAI uses plain text for streams
+            await context.Response.WriteAsync("data: {\"choices\": [{\"delta\": {}}]}\n\n");
+            await context.Response.Body.FlushAsync();
+            try
+            {
+                await Task.Delay(Timeout.Infinite, context.RequestAborted);
+            }
+            catch (OperationCanceledException)
+            {
+                upstreamSawCancel.SetResult();
+            }
+        }, kind: "open_ai");
+
+        // Send Anthropic request which will be translated to OpenAI
+        using var response = await gw.Client.SendAsync(
+            gw.Messages(StreamingRequest),
+            HttpCompletionOption.ResponseHeadersRead);
+            
+        var stream = await response.Content.ReadAsStreamAsync();
+        await stream.ReadAsync(new byte[4096]).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        response.Dispose();
+
+        await upstreamSawCancel.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    }
 }

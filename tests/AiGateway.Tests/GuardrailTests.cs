@@ -72,4 +72,14 @@ public class GuardrailTests
             Assert.DoesNotContain(method.GetParameters(), p => p.ParameterType.IsByRef);
         });
     }
+
+    // The outbound client must opt out of proxy inheritance: a system/env proxy would silently reroute requests
+    // (carrying the injected key to the proxy process) instead of the request going straight to the upstream.
+    [Fact]
+    public void Upstream_client_opts_out_of_proxy_inheritance()
+    {
+        var source = File.ReadAllText(Path.Combine(RepoPaths.Src, "AiGateway", "AiGatewayServiceCollectionExtensions.cs"));
+
+        Assert.Contains("UseProxy = false", source);
+    }
 }
