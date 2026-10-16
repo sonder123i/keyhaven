@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>钥湾 Keyhaven · 真 Key 只留本机的 AI 代理网关</title>
+<meta name="description" content="Windows 上的本地 AI 代理网关。把 Claude Code 的 ANTHROPIC_BASE_URL 指向本机，钥湾替你保管真实上游 Key（DPAPI 密文），发给客户端的只是可即刻吊销的代理密钥。Anthropic 协议直通，OpenAI 协议翻译。">
+<meta name="theme-color" content="#05070E">
+<meta property="og:type" content="website">
+<meta property="og:title" content="钥湾 Keyhaven">
+<meta property="og:description" content="真 Key 只留本机，发出去的只是可吊销的代理密钥。">
+<meta property="og:image" content="assets/icon.png">
+<link rel="icon" href="assets/icon-96.png">
+<link rel="apple-touch-icon" href="assets/icon.png">
+<style>
+:root{
+  --bg:#05070E;
+  --bg-2:#0A0E18;
+  --fg:#ECEDEF;
+  --muted:rgba(236,237,239,.62);
+  --faint:rgba(236,237,239,.50);
+  /* Keyhaven 主色：取自应用图标的玻璃蓝 */
+  --brand:#5B9BFF;
+  --brand-deep:#2E63C8;
+  --brand-soft:#9EC6FF;
+  --violet:#8E7BFF;
+  --mint:#5FD3A8;      /* 只用于「安全 / 已验证」记号 */
+  --warm:#F0C078;
+  --line:rgba(255,255,255,.10);
+  --line-2:rgba(255,255,255,.18);
+  --glass:rgba(255,255,255,.045);
+  --glass-2:rgba(255,255,255,.075);
+  --r:22px;
+  --r-sm:14px;
+  --maxw:1120px;
+  --shadow:0 24px 60px -28px rgba(0,0,0,.85);
+  --specular:rgba(255,255,255,.13);
+
+  --dur-fast-01:70ms;
+  --dur-fast-02:110ms;
+  --dur-moderate-01:150ms;
+  --dur-moderate-02:240ms;
+  --dur-slow-01:400ms;
+  --dur-slow-02:700ms;
+  --ease-standard:cubic-bezier(.2,0,.38,.9);
+  --ease-entrance:cubic-bezier(0,0,.38,.9);
+  --ease-spring:cubic-bezier(.34,1.56,.64,1);
+}
+html[data-theme="light"]{
+  --bg:#EDF0F5;
+  --bg-2:#F6F8FB;
+  --fg:#0B1016;
+  --muted:rgba(11,16,22,.64);
+  --faint:rgba(11,16,22,.60);
+  --brand:#1B62CC;
+  --brand-deep:#164E9F;
+  --brand-soft:#4E8BE8;
+  --violet:#6A55E0;
+  --mint:#267354;
+  --warm:#A8761F;
+  --line:rgba(11,16,22,.09);
+  --line-2:rgba(11,16,22,.16);
+  --glass:rgba(255,255,255,.55);
+  --glass-2:rgba(255,255,255,.72);
+  --shadow:0 24px 60px -34px rgba(15,25,45,.35);
+  --specular:rgba(255,255,255,.5);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:var(--bg);color:var(--fg);
+  font-family:Inter,-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",
+              "PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  font-size:16px;line-height:1.65;letter-spacing:.005em;
+  -webkit-font-smoothing:antialiased;overflow-x:hidden;
+}
+img{display:block;max-width:100%}
+a{color:inherit}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.88em}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* ---------- aurora backdrop：玻璃得有东西可折射 ---------- */
+.aurora{position:fixed;inset:0;z-index:-2;overflow:hidden;pointer-events:none}
+.aurora i{position:absolute;display:block;border-radius:50%;filter:blur(90px);opacity:.5}
+.aurora i:nth-child(1){width:52vw;height:52vw;left:-12vw;top:-16vw;background:radial-gradient(circle,#1E5AA8,transparent 68%)}
+.aurora i:nth-child(2){width:46vw;height:46vw;right:-14vw;top:0;background:radial-gradient(circle,#3B49B8,transparent 68%)}
+.aurora i:nth-child(3){width:40vw;height:40vw;left:24vw;top:36vw;background:radial-gradient(circle,#2A6F8A,transparent 70%);opacity:.34}
+.aurora i:nth-child(4){width:44vw;height:44vw;right:4vw;bottom:-16vw;background:radial-gradient(circle,#4B3BB8,transparent 70%);opacity:.34}
+html[data-theme="light"] .aurora i{opacity:.34}
+.grain{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.16;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E")}
+
+/* ---------- glass ---------- */
+.glass{
+  position:relative;background:var(--glass);
+  -webkit-backdrop-filter:blur(20px) saturate(170%);
+  backdrop-filter:blur(20px) saturate(170%);
+  border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);
+  --mx:50%; --my:0%;
+}
+.glass::after{
+  content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:radial-gradient(420px circle at var(--mx) var(--my),var(--specular),transparent 46%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.20),
+    inset 0 -1px 0 rgba(255,255,255,.04),
+    inset 0 0 0 1px rgba(255,255,255,.03);
+  transition:background var(--dur-moderate-01) var(--ease-standard);
+}
+html[data-theme="light"] .glass::after{
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.9), inset 0 0 0 1px rgba(255,255,255,.4);
+}
+
+/* ---------- nav ---------- */
+.nav{position:sticky;top:0;z-index:50;padding:12px 0;
+  transition:background var(--dur-moderate-02) var(--ease-standard)}
+.nav-inner{
+  max-width:var(--maxw);margin:0 auto;padding:8px 10px 8px 16px;
+  display:flex;align-items:center;gap:16px;border-radius:18px;
+  background:var(--glass);border:1px solid transparent;
+  -webkit-backdrop-filter:blur(16px) saturate(160%);
+  backdrop-filter:blur(16px) saturate(160%);
+  transition:border-color var(--dur-moderate-02) var(--ease-standard),
+             box-shadow var(--dur-moderate-02) var(--ease-standard);
+}
+.nav.stuck .nav-inner{border-color:var(--line);box-shadow:var(--shadow)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:15px;
+  letter-spacing:.01em;text-decoration:none;flex:0 0 auto}
+.brand img{width:28px;height:28px;border-radius:8px}
+.nav-links{display:flex;gap:2px;margin-left:auto;align-items:center}
+.nav-links a{
+  text-decoration:none;color:var(--muted);font-size:14px;padding:8px 13px;border-radius:10px;
+  transition:color var(--dur-fast-02) var(--ease-standard),
+             background var(--dur-fast-02) var(--ease-standard);
+}
+.nav-links a:hover{color:var(--fg);background:var(--glass-2)}
+.icon-btn{
+  width:36px;height:36px;border-radius:11px;display:grid;place-items:center;cursor:pointer;
+  border:1px solid var(--line);background:var(--glass-2);color:var(--muted);
+  transition:color var(--dur-fast-02) var(--ease-standard),
+             transform var(--dur-fast-02) var(--ease-spring),
+             border-color var(--dur-fast-02) var(--ease-standard);
+}
+.icon-btn:hover{color:var(--fg);border-color:var(--line-2);transform:translateY(-1px)}
+.icon-btn svg{width:17px;height:17px}
+html:not([data-theme="light"]) .i-sun{display:block}
+html:not([data-theme="light"]) .i-moon{display:none}
+html[data-theme="light"] .i-sun{display:none}
+html[data-theme="light"] .i-moon{display:block}
+
+/* ---------- buttons ---------- */
+.btn{
+  display:inline-flex;align-items:center;gap:9px;justify-content:center;
+  text-decoration:none;font-size:15px;font-weight:500;letter-spacing:.01em;
+  padding:13px 24px;border-radius:14px;border:1px solid transparent;cursor:pointer;
+  transition:transform var(--dur-fast-02) var(--ease-spring),
+             box-shadow var(--dur-moderate-01) var(--ease-standard),
+             border-color var(--dur-fast-02) var(--ease-standard);
+  will-change:transform;
+}
+.btn svg{width:17px;height:17px;flex:0 0 auto}
+.btn-primary{background:linear-gradient(180deg,#7FB4FF,#2E63C8);color:#04101F;
+  box-shadow:0 10px 30px -12px rgba(46,99,200,.9),inset 0 1px 0 rgba(255,255,255,.55)}
+.btn-primary:hover{transform:translateY(-2px);
+  box-shadow:0 18px 40px -14px rgba(46,99,200,.95),inset 0 1px 0 rgba(255,255,255,.65)}
+.btn-ghost{background:var(--glass-2);border-color:var(--line);color:var(--fg);
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+.btn-ghost:hover{transform:translateY(-2px);border-color:var(--line-2)}
+.btn:active{transform:translateY(0) scale(.985);transition-duration:var(--dur-fast-01)}
+.btn-sm{padding:9px 16px;font-size:14px;border-radius:12px}
+
+/* ---------- hero ---------- */
+.hero{padding:64px 0 84px}
+.hero-grid{display:grid;grid-template-columns:1fr 1.06fr;gap:52px;align-items:center}
+.eyebrow{
+  display:inline-flex;align-items:center;gap:8px;font-size:12.5px;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--brand);font-weight:500;
+  padding:6px 12px;border-radius:999px;border:1px solid var(--line);
+  background:var(--glass);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+}
+.eyebrow s{width:6px;height:6px;border-radius:50%;background:var(--brand);text-decoration:none;
+  box-shadow:0 0 0 4px rgba(91,155,255,.18)}
+h1{font-size:clamp(34px,4.9vw,54px);line-height:1.07;letter-spacing:-.028em;margin:22px 0 0;font-weight:600}
+h1 em{font-style:normal;background:linear-gradient(100deg,var(--brand) 6%,var(--brand-soft) 44%,var(--violet) 96%);
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.lede{font-size:17px;color:var(--muted);margin:20px 0 0;max-width:32em}
+.cta{display:flex;flex-wrap:wrap;gap:12px;margin-top:30px}
+.trust{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:22px;font-size:13.5px;color:var(--faint)}
+.trust span{display:inline-flex;align-items:center;gap:7px}
+.trust svg{width:14px;height:14px;color:var(--mint);flex:0 0 auto}
+
+/* hero visual：一台「屏幕」里放着真机截图 */
+.hero-visual{position:relative;display:flex;justify-content:center;perspective:1400px}
+.screen-glow{
+  position:absolute;inset:-8% -14% -12% -14%;z-index:-1;border-radius:50%;
+  background:radial-gradient(ellipse at 50% 42%,rgba(91,155,255,.34),transparent 68%);
+  filter:blur(54px);
+}
+.screen{
+  position:relative;width:100%;max-width:620px;border-radius:16px;padding:10px;
+  background:linear-gradient(160deg,#2A3446,#0C1017 56%,#1B2433);
+  box-shadow:
+    0 58px 112px -46px rgba(0,0,0,.95),
+    0 0 0 1px rgba(255,255,255,.10),
+    inset 0 1px 0 rgba(255,255,255,.20);
+  transform-style:preserve-3d;
+  transition:transform var(--dur-moderate-01) var(--ease-standard);
+}
+html[data-theme="light"] .screen{
+  background:linear-gradient(160deg,#FFFFFF,#D7DDE8 56%,#EEF2F7);
+  box-shadow:
+    0 54px 96px -46px rgba(20,35,60,.42),
+    0 0 0 1px rgba(11,16,22,.10),
+    inset 0 1px 0 #fff;
+}
+.screen img{width:100%;height:auto;border-radius:9px}
+
+/* ---------- sections ---------- */
+main{flex:1}
+section{padding:16px 0 72px}
+.sec-head{margin-bottom:34px;max-width:46em}
+.sec-tag{font-size:12.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--brand);font-weight:500}
+h2{font-size:clamp(24px,2.9vw,33px);line-height:1.2;letter-spacing:-.02em;margin:10px 0 12px;font-weight:600}
+.sec-head p{color:var(--muted);margin:0;font-size:16px}
+h3{font-weight:600}
+.sub-label{margin:38px 0 16px;font-size:12.5px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--faint);font-weight:500}
+
+/* pipeline：一条链路 */
+.pipe{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:8px;align-items:stretch;margin-top:8px}
+.pnode{display:flex;flex-direction:column;gap:7px;padding:22px 20px;border-radius:var(--r);
+  background:var(--glass);border:1px solid var(--line);
+  -webkit-backdrop-filter:blur(18px) saturate(160%);backdrop-filter:blur(18px) saturate(160%);
+  transition:border-color var(--dur-moderate-02) var(--ease-standard)}
+.pnode b{font-size:16px;font-weight:600;letter-spacing:-.01em}
+.pnode span{font-size:13.5px;color:var(--faint);line-height:1.6}
+.pnode .pico{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;
+  border:1px solid var(--line);color:var(--brand);
+  background:linear-gradient(150deg,rgba(91,155,255,.20),rgba(142,123,255,.14))}
+.pnode .pico svg{width:19px;height:19px}
+.pnode.is-vault{border-color:rgba(91,155,255,.36);
+  box-shadow:0 0 0 1px rgba(91,155,255,.12),0 30px 70px -42px rgba(91,155,255,.75)}
+.parrow{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+  padding:0 6px;text-align:center;font-size:11.5px;line-height:1.5;color:var(--faint);letter-spacing:.01em}
+.parrow svg{width:26px;height:26px;color:var(--brand);opacity:.85;flex:0 0 auto}
+
+/* tables */
+.tbl-wrap{overflow-x:auto;border-radius:var(--r);border:1px solid var(--line);
+  background:var(--glass);
+  -webkit-backdrop-filter:blur(20px) saturate(170%);backdrop-filter:blur(20px) saturate(170%)}
+table{width:100%;border-collapse:collapse;min-width:600px}
+th,td{text-align:left;padding:15px 20px;font-size:14.5px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:500;color:var(--faint);font-size:12.5px;letter-spacing:.06em;text-transform:uppercase}
+tbody tr:last-child td{border-bottom:none}
+td{color:var(--muted)}
+td strong{font-weight:500;color:var(--fg)}
+td code{color:var(--brand)}
+
+/* pledges：安全脊柱，cardless，只用分隔线 */
+.pledge{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:0 40px}
+.pledge div{display:flex;gap:12px;padding:16px 0;border-bottom:1px solid var(--line);align-items:flex-start}
+.pledge svg{width:17px;height:17px;color:var(--mint);flex:0 0 auto;margin-top:4px}
+.pledge p{margin:0;font-size:14.5px;color:var(--muted);line-height:1.65}
+.pledge b{color:var(--fg);font-weight:500}
+
+/* bento */
+.bento{display:grid;grid-template-columns:repeat(6,1fr);gap:16px}
+.card{padding:26px 24px 24px;display:flex;flex-direction:column;gap:11px}
+.card .ico{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;
+  background:linear-gradient(150deg,rgba(91,155,255,.20),rgba(142,123,255,.14));
+  border:1px solid var(--line);color:var(--brand)}
+.card .ico svg{width:19px;height:19px}
+.card h3{margin:2px 0 0;font-size:16.5px;letter-spacing:-.005em}
+.card p{margin:0;font-size:14.5px;color:var(--muted);line-height:1.7}
+.card .tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto;padding-top:8px}
+.tag{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid var(--line);
+  background:var(--glass);color:var(--muted)}
+.c-2{grid-column:span 2}
+.c-3{grid-column:span 3}
+
+/* shots */
+.shot-grid{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+.shot .frame{position:relative;border-radius:16px;padding:9px;
+  background:linear-gradient(160deg,#2A3446,#0C1017 56%,#1B2433);
+  box-shadow:0 40px 80px -44px rgba(0,0,0,.85),0 0 0 1px rgba(255,255,255,.09),inset 0 1px 0 rgba(255,255,255,.18)}
+html[data-theme="light"] .frame{
+  background:linear-gradient(160deg,#fff,#D7DDE8 56%,#EEF2F7);
+  box-shadow:0 40px 76px -44px rgba(20,35,60,.35),0 0 0 1px rgba(11,16,22,.09),inset 0 1px 0 #fff}
+.shot .frame img{width:100%;height:auto;border-radius:9px}
+.shot figcaption{font-size:13.5px;color:var(--faint);margin-top:12px}
+.shot figcaption b{color:var(--fg);font-weight:500}
+.shot-note{font-size:13.5px;color:var(--faint);margin-top:22px}
+
+/* steps */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.step{padding:24px}
+.step .n{width:32px;height:32px;border-radius:10px;display:grid;place-items:center;
+  background:linear-gradient(180deg,#7FB4FF,#2E63C8);color:#04101F;font-weight:600;font-size:14px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.55)}
+.step h3{margin:14px 0 6px;font-size:16px}
+.step p{margin:0;font-size:14.5px;color:var(--muted)}
+.note{margin-top:20px;padding:18px 20px;border-radius:var(--r-sm);font-size:14px;color:var(--muted);
+  border:1px dashed var(--line-2);background:var(--glass)}
+.note b{color:var(--warm);font-weight:500}
+
+/* timeline */
+.tl{position:relative;padding-left:26px;margin:0;list-style:none}
+.tl::before{content:"";position:absolute;left:5px;top:8px;bottom:8px;width:1px;
+  background:linear-gradient(var(--brand),rgba(91,155,255,.05))}
+.tl li{position:relative;padding:0 0 24px}
+.tl li:last-child{padding-bottom:0}
+.tl li::before{content:"";position:absolute;left:-26px;top:7px;width:11px;height:11px;border-radius:50%;
+  background:var(--bg);border:1px solid var(--brand);box-shadow:0 0 0 3px rgba(91,155,255,.16)}
+.tl b{font-weight:500;color:var(--fg);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13.5px;
+  display:inline-block;min-width:72px}
+.tl span{color:var(--muted);font-size:14.5px}
+.tl ul{margin:8px 0 0;padding-left:18px;color:var(--muted);font-size:14.5px;line-height:1.7}
+.tl ul li{padding:2px 0}
+.tl ul li::before{display:none}
+.tl ul li:last-child{padding-bottom:2px}
+
+/* finale */
+.finale{padding:8px 0 72px}
+.finale-stage{position:relative}
+.finale-text{margin:0;text-align:center;font-size:clamp(22px,3.7vw,40px);font-weight:600;
+  letter-spacing:-.02em;line-height:1.3}
+.finale-text span{background:linear-gradient(100deg,var(--brand) 5%,var(--brand-soft) 48%,var(--violet) 95%);
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.finale-note{text-align:center;margin:18px 0 0;font-size:14px;color:var(--faint)}
+.finale-note a{color:var(--brand);text-decoration:none;border-bottom:1px solid rgba(91,155,255,.35)}
+.finale-note a:hover{border-bottom-color:var(--brand)}
+
+/* footer */
+footer{border-top:1px solid var(--line);padding:52px 0 68px;margin-top:24px}
+.foot{display:grid;grid-template-columns:1.5fr 1fr 1fr;gap:34px}
+.foot .brand{margin-bottom:14px}
+.foot p{margin:0;font-size:13.5px;color:var(--faint);line-height:1.8}
+.foot h4{margin:0 0 12px;font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);font-weight:500}
+.foot ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:9px}
+.foot a{font-size:14px;color:var(--muted);text-decoration:none;
+  transition:color var(--dur-fast-02) var(--ease-standard)}
+.foot a:hover{color:var(--brand)}
+.legal{margin-top:40px;padding-top:22px;border-top:1px solid var(--line);font-size:13px;color:var(--faint)}
+
+/* reveal ── 基线保持可见；支持原生滚动驱动交给 CSS，否则才由 JS 兜底 */
+.rv{opacity:1;transform:none}
+@keyframes rv-rise{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:none}}
+@supports (animation-timeline:scroll()){
+  .rv{animation:rv-rise var(--dur-slow-02) linear both;
+    animation-timeline:view();animation-range:entry 0% entry 60%}
+}
+html.js-reveal .rv{opacity:0;transform:translateY(18px);
+  transition:opacity var(--dur-slow-01) var(--ease-entrance),
+             transform var(--dur-slow-01) var(--ease-entrance)}
+html.js-reveal .rv.in{opacity:1;transform:none}
+
+/* 顶部阅读进度条（原生滚动驱动，零 JS） */
+.progress{display:none}
+@keyframes pg-grow{to{transform:scaleX(1)}}
+@supports (animation-timeline:scroll()){
+  .progress{display:block;position:fixed;top:0;left:0;right:0;height:2px;z-index:60;
+    background:linear-gradient(90deg,var(--brand),var(--violet));
+    transform-origin:0 50%;transform:scaleX(0);
+    animation:pg-grow linear both;animation-timeline:scroll(root)}
+}
+
+/* 首屏分级编排 */
+@keyframes hero-rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+@keyframes hero-pop{from{opacity:0;transform:translateY(26px) scale(.97)}to{opacity:1;transform:none}}
+.stagger>*{animation:hero-rise var(--dur-slow-02) var(--ease-entrance) both}
+.stagger>*:nth-child(2){animation-delay:80ms}
+.stagger>*:nth-child(3){animation-delay:160ms}
+.stagger>*:nth-child(4){animation-delay:240ms}
+.stagger>*:nth-child(5){animation-delay:320ms}
+.stagger>*:nth-child(6){animation-delay:400ms}
+.hero-visual{animation:hero-pop var(--dur-slow-02) var(--ease-entrance) both;animation-delay:120ms}
+
+@media (max-width:960px){
+  .hero-grid{grid-template-columns:1fr;gap:44px}
+  .hero-visual{order:-1}
+  .bento{grid-template-columns:repeat(2,1fr)}
+  .c-2,.c-3{grid-column:span 1}
+  .shot-grid{grid-template-columns:1fr}
+  .steps{grid-template-columns:1fr}
+  .foot{grid-template-columns:1fr;gap:26px}
+  .pipe{grid-template-columns:1fr}
+  .parrow{flex-direction:row;padding:4px 0}
+  .parrow svg{transform:rotate(90deg)}
+  .nav-links a{display:none}
+  .nav-links a.keep{display:inline-block}
+}
+@media (max-width:560px){
+  .bento{grid-template-columns:1fr}
+  .pledge{grid-template-columns:1fr}
+  .hero{padding:40px 0 60px}
+  section{padding:8px 0 56px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto !important}
+  *,*::before,*::after{
+    animation-duration:.01ms !important;animation-iteration-count:1 !important;
+    transition-duration:.01ms !important;animation-timeline:auto !important;
+    scroll-behavior:auto !important;
+  }
+  .rv,.stagger>*,.hero-visual{opacity:1 !important;transform:none !important}
+  .progress{display:none !important}
+}
+</style>
+</head>
+<body>
+
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+<div class="grain" aria-hidden="true"></div>
+<h2 class="sr-only">钥湾 Keyhaven：Windows 上的本地 AI 代理网关，把 Claude Code 的 ANTHROPIC_BASE_URL 指向本机，真实上游 Key 以 DPAPI 密文只留本机，Anthropic 协议直通、OpenAI 协议翻译。</h2>
+
+<div class="progress" aria-hidden="true"></div>
+
+<nav class="nav" id="nav">
+  <div class="nav-inner">
+    <a class="brand" href="#top"><img src="assets/icon-96.png" alt="" width="28" height="28">钥湾 Keyhaven</a>
+    <div class="nav-links">
+      <a href="#how">原理</a>
+      <a href="#security">安全</a>
+      <a href="#features">界面</a>
+      <a href="#shots">截图</a>
+      <a href="#install">安装</a>
+      <button class="icon-btn" id="theme" type="button" aria-label="切换深浅色">
+        <svg class="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+      <a class="btn btn-primary btn-sm keep" href="#install">下载</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap hero-grid">
+    <div class="stagger">
+      <span class="eyebrow"><s></s>Windows · 开源 · MIT</span>
+      <h1>真上游 Key 锁在本机，<em>出去的是可吊销的代理密钥</em>。</h1>
+      <p class="lede">把 Claude Code 的 <code>ANTHROPIC_BASE_URL</code> 指向本机，钥湾验过密钥再替你转给上游。Anthropic 协议直通，OpenAI 协议翻译——网关只做这一件事，做得很安静。</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="https://github.com/sonder123i/keyhaven/releases/download/v1.0.1/keyhaven-1.0.1-win-x64.zip">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>
+          下载 zip <span style="opacity:.7;font-weight:400">约 0.53 MB</span>
+        </a>
+        <a class="btn btn-ghost" href="https://github.com/sonder123i/keyhaven" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 1.8a10.2 10.2 0 0 0-3.2 19.9c.5.1.7-.2.7-.5v-1.9c-2.8.6-3.4-1.3-3.4-1.3-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.6 1.1 1.6 1.1.9 1.6 2.4 1.1 3 .9.1-.7.4-1.1.7-1.4-2.2-.3-4.6-1.1-4.6-5 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .9-.3 2.8 1a9.5 9.5 0 0 1 5 0c1.9-1.3 2.8-1 2.8-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.9v2.8c0 .3.2.6.7.5A10.2 10.2 0 0 0 12 1.8"/></svg>
+          查看源码
+        </a>
+      </div>
+      <p style="margin:10px 0 0;font-size:12.5px;opacity:.66">当前版本 <b style="font-weight:500;color:var(--fg)">1.0.1</b>。目标机需 <a href="https://dotnet.microsoft.com/download/dotnet/8.0" target="_blank" rel="noopener">.NET 8 Desktop + ASP.NET Core 运行时</a>；其余在 <a href="https://github.com/sonder123i/keyhaven/releases/latest" target="_blank" rel="noopener">Releases</a>。</p>
+      <div class="trust">
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>真 Key 以 DPAPI 密文只留本机</span>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>只监听 127.0.0.1</span>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>不记请求内容与任何密钥</span>
+      </div>
+    </div>
+    <div class="hero-visual">
+      <div class="screen-glow" aria-hidden="true"></div>
+      <div class="screen" id="screen">
+        <img src="assets/shots/upstream-page.png" width="940" height="640"
+             alt="钥湾 Keyhaven「上游与 Key」页：顶部状态脊写着当前上游，下方是上游列表与一键预设表单" decoding="async" fetchpriority="high">
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+
+<section id="how">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <div class="sec-tag">一条链路</div>
+      <h2>一个本地网关，替你把 Key 挡在后面</h2>
+      <p>Claude Code 以为自己还在跟 Anthropic 说话，其实中间隔着一道开在本机的门。门外只有一把能随时作废的代理密钥，门里才是真 Key。</p>
+    </div>
+
+    <div class="pipe rv">
+      <div class="pnode">
+        <div class="pico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="16" rx="2.5"/><path d="M6.5 9l3.5 3-3.5 3M13 15h4"/></svg></div>
+        <b>Claude Code</b>
+        <span>只持代理密钥，发到本机</span>
+      </div>
+      <div class="parrow">
+        <span><code>ANTHROPIC_BASE_URL</code><br>http://127.0.0.1:8000</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h14"/><path d="M12 6l6 6-6 6"/></svg>
+      </div>
+      <div class="pnode is-vault">
+        <div class="pico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5.5c0 4.3-2.9 7.7-7 9.5-4.1-1.8-7-5.2-7-9.5V6z"/><circle cx="12" cy="11" r="1.7"/><path d="M12 12.7V16"/></svg></div>
+        <b>钥湾 Keyhaven</b>
+        <span>验密钥 → 换成真 Key → 转发</span>
+      </div>
+      <div class="parrow">
+        <span>真 Key 注入<br>只沿这一条边离开进程</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h14"/><path d="M12 6l6 6-6 6"/></svg>
+      </div>
+      <div class="pnode">
+        <div class="pico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4 4 0 0 1-.4-8A5.5 5.5 0 0 1 17 9.2 3.9 3.9 0 0 1 17.5 18z"/></svg></div>
+        <b>上游</b>
+        <span>Anthropic / OpenAI 兼容</span>
+      </div>
+    </div>
+
+    <p class="sub-label rv">出站分两条路</p>
+    <div class="tbl-wrap rv">
+      <table>
+        <thead>
+          <tr><th>上游类型</th><th>网关行为</th><th>具体做了什么</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Anthropic 兼容</strong><br>Anthropic、DeepSeek <code>/anthropic</code></td>
+            <td><strong>直通</strong></td>
+            <td>只改 <code>model</code> 字段，其余原样携带：thinking、工具调用、图片、流式、中止传播；请求头走白名单。</td>
+          </tr>
+          <tr>
+            <td><strong>OpenAI 兼容</strong><br>DeepSeek、MiMo 等 API 根</td>
+            <td><strong>翻译</strong></td>
+            <td>Anthropic <code>messages</code> ↔ <code>chat/completions</code>：文本、图片、<code>tool_use</code>/<code>tool_result</code>、tools、stop_sequences 都译；流式按块索引严格配对，usage 从末尾分片合成；thinking 丢弃，<code>count_tokens</code> 直答 404。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="security">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <div class="sec-tag">安全脊柱</div>
+      <h2>单点解密，只沿一条边离开进程</h2>
+      <p>这些不是可选项，是刻意设计。改任何一条都要先说明代价——仓库里十一条护栏记着为什么。</p>
+    </div>
+    <div class="pledge rv">
+      <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+        <p><b>真 Key 存 DPAPI 密文</b>，落在本机 <code>config.json</code>；跟 Windows 用户绑定，覆盖程序换版本也照样解得开。</p></div>
+      <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+        <p><b>只在一处解密</b>：注入器是挂在 HttpClient 管道上的 <code>DelegatingHandler</code>，组合根之外无人可调用。</p></div>
+      <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+        <p><b>发完即删，上游零日志</b>；上游客户端不跟随重定向，本机的 <code>HTTP_PROXY</code> 也影响不到它。</p></div>
+      <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+        <p><b>代理密钥只存 SHA-256</b>，不可回显；鉴权只做一次定值比较，不落计数、不做退避与锁定。</p></div>
+      <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+        <p><b>只监听 127.0.0.1</b>，地址写死、只有端口可改。挡的是本机网页与其他程序，不是公网。</p></div>
+      <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+        <p><b>吊销即刻生效</b>：作废一把密钥，客户端下一次请求就是 401。</p></div>
+      <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+        <p><b>运行日志只在内存</b>（500 行环形缓冲），一行一请求，只记时间、指纹、上游、模型、状态与首字节。</p></div>
+      <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+        <p><b>唯一一处非上游外呼</b>：启动后匿名查一次 GitHub Releases 看有没有新版，零请求体、不带本地信息，断网一律静默。</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <div class="sec-tag">界面</div>
+      <h2>最小 UI，够用就好</h2>
+      <p>四个页面，一个托盘。不摆仪表盘，不堆开关——要做的决定就那么几个。</p>
+    </div>
+    <div class="bento rv">
+      <div class="card glass c-2">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg></div>
+        <h3>状态脊 + 一键切换</h3>
+        <p>顶部一条脊写着「当前跑在谁上面」，右侧选上游与模型，一键切换生效。</p>
+        <div class="tags"><span class="tag">未激活时整块转告警色</span></div>
+      </div>
+      <div class="card glass c-2">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></div>
+        <h3>上游与 Key</h3>
+        <p>厂家预设一键填好类型与地址（只预填核实过的，其余明标）；Key 存进后输入框立即清空，界面里再也看不到它。</p>
+      </div>
+      <div class="card glass c-2">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 8-8"/><path d="M20 12a8 8 0 0 1-8 8"/><path d="M12 8v4l2.5 1.5"/></svg></div>
+        <h3>只读诊断</h3>
+        <p>「测试连接」「拉取模型」只看不改：报出可达状态与往返耗时，拉取到的模型名直接填进模型框。</p>
+      </div>
+      <div class="card glass c-2">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.5" cy="14.5" r="4"/><path d="M11.4 11.6L20 3M17 6l2.5 2.5M14.5 8.5L17 11"/></svg></div>
+        <h3>代理密钥</h3>
+        <p>签发给客户端的可吊销凭据，不是上游 Key。带标签、显指纹、可即刻吊销；配置片段只显示一次。</p>
+        <div class="tags"><span class="tag">只存哈希</span><span class="tag">即刻吊销</span></div>
+      </div>
+      <div class="card glass c-2">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg></div>
+        <h3>运行日志</h3>
+        <p>一行一请求：时间、密钥指纹、上游、模型、状态、首字节耗时、结束原因。不记请求内容，不落盘。</p>
+      </div>
+      <div class="card glass c-2">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 20h8"/></svg></div>
+        <h3>托盘常驻</h3>
+        <p>关窗只是收进托盘，网关继续跑；同一时刻只允许一个实例，放两份副本没意义。</p>
+        <div class="tags"><span class="tag">单实例</span><span class="tag">不做开机自启</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="shots">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <div class="sec-tag">截图</div>
+      <h2>长这样</h2>
+      <p>Windows 原生 WPF 窗口，跟着系统深浅色走。下面是实机截图。</p>
+    </div>
+    <div class="shot-grid rv">
+      <figure class="shot" style="margin:0">
+        <div class="frame"><img src="assets/shots/upstream-page.png" width="940" height="640" loading="lazy" decoding="async" alt="上游与 Key 页"></div>
+        <figcaption><b>上游与 Key</b> · 状态脊、一键预设、只读诊断</figcaption>
+      </figure>
+      <figure class="shot" style="margin:0">
+        <div class="frame"><img src="assets/shots/proxy-keys-page.png" width="940" height="640" loading="lazy" decoding="async" alt="代理密钥页"></div>
+        <figcaption><b>代理密钥</b> · 标签、指纹、状态与创建时间</figcaption>
+      </figure>
+    </div>
+    <p class="shot-note">图片存放于 <code>assets/shots/</code>，换图覆盖同名文件即可。</p>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <div class="sec-tag">安装</div>
+      <h2>三步装好</h2>
+      <p>当前版本 <strong style="color:var(--fg);font-weight:500">1.0.1</strong>，压缩包约 <strong style="color:var(--fg);font-weight:500">0.53 MB</strong>，解压后 9 个文件 / 约 0.8 MB。</p>
+    </div>
+    <div class="steps rv">
+      <div class="step glass">
+        <div class="n">1</div>
+        <h3>下载并解压</h3>
+        <p>拿到 <code>keyhaven-1.0.1-win-x64.zip</code>，解压到任意目录。依赖框架的产物要整包放在一起——只拿走 exe 是起不来的。</p>
+      </div>
+      <div class="step glass">
+        <div class="n">2</div>
+        <h3>装 .NET 8 运行时</h3>
+        <p>目标机需 .NET 8 的 <b style="color:var(--fg);font-weight:500">Desktop 运行时 + ASP.NET Core 运行时</b>，一次装好，之后换版本不用再装。</p>
+      </div>
+      <div class="step glass">
+        <div class="n">3</div>
+        <h3>双击 AiGateway.App.exe</h3>
+        <p>托盘出现图标，网关跑在 <code>127.0.0.1:8000</code>。在窗口里配一次上游与代理密钥，把配置片段合并进 Claude Code。</p>
+      </div>
+    </div>
+    <div class="note rv">
+      <b>不做开机自启。</b>要开机就跑，把 <code>AiGateway.App.exe</code> 的快捷方式丢进 <code>shell:startup</code> 即可。配置与密钥在 <code>%LOCALAPPDATA%\AiGateway\config.json</code>，不跟程序目录走，换版本不动它们；卸载时删掉程序目录再删这个文件夹，就彻底清干净了。
+    </div>
+  </div>
+</section>
+
+<section id="changelog">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <div class="sec-tag">版本演进</div>
+      <h2>刚开始，但已经在改</h2>
+    </div>
+    <ul class="tl rv">
+      <li>
+        <b>v1.0.1</b> <span>首个带更新检查的版本（只提示、不自更）。</span>
+        <ul>
+          <li>启动后匿名查一次 GitHub Releases，有新版在设置页亮提示，点了去下载页手动下；托盘菜单新增「检查更新」，新版 / 已最新 / 失败都有回话。</li>
+          <li>这是唯一一处非上游外呼：匿名 GET、零请求体、只带 GitHub API 强制的 User-Agent。</li>
+          <li><code>docs/install.md</code> 补上更新三步：托盘退出 → 覆盖 9 个文件 → 重开。</li>
+        </ul>
+      </li>
+      <li>
+        <b>v1.0.0</b> <span>第一个发布版。</span>
+        <ul>
+          <li>状态脊 UI、上游一键预设、只读诊断（测试连接 / 拉取模型）。</li>
+          <li>Anthropic 协议直通，OpenAI 协议翻译（流式、工具调用、中止传播）。</li>
+          <li>代理密钥签发 / 指纹 / 即刻吊销；只监听 127.0.0.1。</li>
+          <li>运行日志一行一请求，只拉取；托盘常驻。</li>
+        </ul>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<section class="finale">
+  <div class="wrap finale-stage">
+    <h2 class="finale-text"><span>真 Key 只留本机</span><br>发出去的，只是一把随时能作废的钥匙</h2>
+    <p class="finale-note">钥湾 Keyhaven · 开源免费（MIT） · <a href="#install">回到安装步骤</a></p>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <div>
+        <a class="brand" href="#top"><img src="assets/icon-96.png" alt="" width="28" height="28">钥湾 Keyhaven</a>
+        <p>Windows 上的本地 AI 代理网关。真 Key 只留本机，发出去的只是可吊销的代理密钥。</p>
+      </div>
+      <div>
+        <h4>本页</h4>
+        <ul>
+          <li><a href="#how">原理</a></li>
+          <li><a href="#security">安全</a></li>
+          <li><a href="#install">安装</a></li>
+          <li><a href="#changelog">版本</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>资源</h4>
+        <ul>
+          <li><a href="https://github.com/sonder123i/keyhaven" target="_blank" rel="noopener">源码仓库</a></li>
+          <li><a href="https://github.com/sonder123i/keyhaven/releases/latest" target="_blank" rel="noopener">Releases</a></li>
+          <li><a href="https://sonder123i.github.io/">全部项目</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="legal">MIT 许可 · © 2026 Sonder (sonder123i) · 钥湾不采集任何使用数据</p>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var root = document.documentElement;
+
+  /* theme：存过就用，否则跟系统；key 与站点其它页同一个，同源自动同步 */
+  try {
+    var saved = localStorage.getItem('cch-theme');
+    if (saved) root.setAttribute('data-theme', saved);
+    else root.setAttribute('data-theme',
+      window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  } catch (e) { root.setAttribute('data-theme', 'dark'); }
+
+  document.getElementById('theme').addEventListener('click', function () {
+    var next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('cch-theme', next); } catch (e) {}
+  });
+
+  var nav = document.getElementById('nav');
+  var onScroll = function () { nav.classList.toggle('stuck', window.scrollY > 8); };
+  onScroll();
+  window.addEventListener('scroll', onScroll, { passive: true });
+
+  var calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* 滚动显现：原生支持 animation-timeline 就交给 CSS，否则才补 JS 兜底 */
+  var nativeTimeline = window.CSS && CSS.supports && CSS.supports('animation-timeline', 'scroll()');
+  if (!nativeTimeline && !calm && 'IntersectionObserver' in window) {
+    root.classList.add('js-reveal');
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); }
+      });
+    }, { rootMargin: '0px 0px -12% 0px' });
+    document.querySelectorAll('.rv').forEach(function (el) { io.observe(el); });
+  }
+
+  if (window.matchMedia('(hover:hover) and (pointer:fine)').matches) {
+    /* 玻璃高光跟随指针 */
+    document.querySelectorAll('.glass, .pnode').forEach(function (el) {
+      el.addEventListener('pointermove', function (e) {
+        if (calm) return;
+        var r = el.getBoundingClientRect();
+        el.style.setProperty('--mx', (e.clientX - r.left) + 'px');
+        el.style.setProperty('--my', (e.clientY - r.top) + 'px');
+      }, { passive: true });
+    });
+
+    /* 首屏那台「屏幕」随指针轻微转动 */
+    var sc = document.getElementById('screen');
+    if (sc && !calm) {
+      sc.addEventListener('pointermove', function (e) {
+        var r = sc.getBoundingClientRect();
+        var x = (e.clientX - r.left) / r.width - .5;
+        var y = (e.clientY - r.top) / r.height - .5;
+        sc.style.transform = 'rotateY(' + (x * 6).toFixed(2) + 'deg) rotateX(' + (-y * 5).toFixed(2) + 'deg)';
+      }, { passive: true });
+      sc.addEventListener('pointerleave', function () { sc.style.transform = ''; });
+    }
+  }
+})();
+</script>
+</body>
+</html>
