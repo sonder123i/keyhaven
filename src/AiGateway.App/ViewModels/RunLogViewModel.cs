@@ -12,6 +12,9 @@ internal sealed record RunLogRow(
     string FirstByte,
     string Outcome)
 {
+    // 日志里真正要一眼扫到的只有「哪条出错了」。客户端中止不算错 —— 那是用户按了 Esc。
+    public required bool IsError { get; init; }
+
     public override string ToString() => $"{Time} {Fingerprint} {Provider} {Model} {Status} {FirstByte} {Outcome}";
 }
 
@@ -26,6 +29,8 @@ internal sealed class RunLogViewModel : ObservableObject
     public RunLogViewModel(IRunLog log) => _log = log;
 
     public ObservableCollection<RunLogRow> Rows { get; } = [];
+
+    public bool IsEmpty => Rows.Count == 0;
 
     public string Status
     {
@@ -46,12 +51,18 @@ internal sealed class RunLogViewModel : ObservableObject
                 entry.Model ?? None,
                 entry.StatusCode?.ToString() ?? None,
                 entry.FirstByte is { } ms ? $"{(int)ms.TotalMilliseconds}ms" : None,
-                OutcomeText(entry.Outcome)));
+                OutcomeText(entry.Outcome))
+            {
+                IsError = entry.Outcome is RunLogOutcome.UpstreamInterrupted or RunLogOutcome.UnhandledError
+                          || entry.StatusCode >= 400,
+            });
         }
 
+        // 空表时这句跟页面上那句说明重复，留空让视图收起整行
         Status = entries.Count == 0
-            ? "还没有请求。日志只在内存里，重启程序后清空。"
+            ? string.Empty
             : $"共 {entries.Count} 条（最多保留 {_log.Capacity} 条，重启清空）。";
+        Raise(nameof(IsEmpty));
     }
 
     private static string OutcomeText(RunLogOutcome outcome) => outcome switch

@@ -1,4 +1,6 @@
-# AI 本地代理网关（Windows WPF）
+# 钥湾 Keyhaven —— AI 本地代理网关（Windows WPF）
+
+<img src="src/AiGateway.App/Assets/keyhaven.png" alt="钥湾 Keyhaven 图标" width="128">
 
 > 新会话的入口。只交代**到哪了、先读什么、为什么**；架构细节在 `docs/architecture/`。
 
@@ -14,15 +16,25 @@ C# / .NET 8 WPF 桌面应用。Claude Code 把 `ANTHROPIC_BASE_URL` 指向本机
 
 **产品定位：轻量、极简、纯本地。**
 
+## 界面
+
+**上游与 Key**——顶部状态脊是「当前跑在谁上面」，右侧一键切换；一键预设填好厂家类型与地址，测试连接 / 拉取模型是只读诊断：
+
+<img src="docs/screenshots/upstream-page.png" alt="上游与 Key 页：状态脊、一键预设、只读诊断" width="940">
+
+**代理密钥**——签发给客户端的可吊销凭据，不是上游 Key：
+
+<img src="docs/screenshots/proxy-keys-page.png" alt="代理密钥页：签发、指纹、吊销" width="940">
+
 ## 运行前提
 
 - **Windows 10/11**。
-- **.NET 8**：开发需 SDK `8.0.426`（`global.json` 钉住，`rollForward=latestFeature`）；直接跑发布版只需 **.NET 8 Desktop 运行时 + ASP.NET Core 运行时**（依赖框架发布，产物 0.37 MB / 9 文件）。
+- **.NET 8**：开发需 SDK `8.0.426`（`global.json` 钉住，`rollForward=latestFeature`）；直接跑发布版只需 **.NET 8 Desktop 运行时 + ASP.NET Core 运行时**（依赖框架发布，产物 9 文件 / 约 0.8 MB，三个 `.pdb` 删后约 0.66 MB）。
 
 ## 快速开始
 
 ```powershell
-git clone https://github.com/sonder123i/ai-gateway.git
+git clone https://github.com/sonder123i/keyhaven.git
 cd ai-gateway
 dotnet build -c Release
 dotnet run --project src/AiGateway.App
@@ -33,7 +45,7 @@ dotnet run --project src/AiGateway.App
 3. 把配置片段合并进 `~/.claude/settings.json` 后重开 Claude Code。
 
 ```powershell
-dotnet test -c Release   # 166 个测试
+dotnet test -c Release   # 168 个测试
 ```
 
 > 若本机设了 `HTTP_PROXY`，历史版本会出现一条假失败；网关的上游客户端现已显式 `UseProxy = false`，不受影响。
@@ -44,12 +56,12 @@ dotnet test -c Release   # 166 个测试
 | --- | --- |
 | 1–3 探索 / 澄清 / 架构 | ✅ **2026-10-15 review 后重写**（第一版出自上一个模型；为什么改见下文与 `evidence.md` §2） |
 | 4 实现计划 | ✅ **14 个故事**：`docs/plan/ai-gateway.implementation-plan.json`。M1 = S1–S8（DeepSeek 直通可用），M2 = S11–S12（OpenAI 翻译） |
-| 5 编码 | 🟢 **M1 达成（S1–S10）+ M2 全部实现（S11–S12）（2026-10-15）**。真 Claude Code 2.1.300 经网关直通 DeepSeek：对话、工具调用、thinking、图片、中止、一键切换、吊销后立即 401 全部实测通过（记录：`evidence.md` §7）。已有：3 + 1 个项目；`config.json` + DPAPI 只写密钥库；只监听 `127.0.0.1` 的宿主（单实例、托盘常驻）；代理密钥（签发 / 鉴权 / 即刻吊销）；真实 Key 注入（不跟随重定向、零日志、发完即删）；直通转发（只改 `model`、头白名单、真流式、中止传播）；最小 UI（上游与 Key / 代理密钥 / 运行日志 / 设置 + 顶栏一键切换）；运行日志（500 行内存环形缓冲，一行一请求，只拉取）；**发布形态选定为依赖框架**（0.37 MB / 9 文件，一条命令，见 `docs/install.md`），不做开机自启。**S11 已加 OpenAI 上游的翻译路径（请求方向 + 非流式响应）**：Anthropic 请求 → `chat/completions`（system / 文本 / 图片 / tool_use / tool_result / tools / tool_choice / stop_sequences，`stream` 时带 `stream_options.include_usage`，thinking 丢弃 [D4]），非流式响应译回 Anthropic message，翻译路径上 `count_tokens` 直接 404；入口按上游类型分派（Anthropic 走直通、OpenAI 走翻译），上游是 OpenAI 时真实 Key 以 `Authorization: Bearer` 注入。**S12 完成流式**：OpenAI chunk → Anthropic 事件序列（`message_start` / `content_block_start|delta|stop` / `message_delta` / `message_stop`），工具调用的扁平分片按上游 `index` 累积、**块索引严格配对**，名称到齐才开块，收尾补齐所有块关闭，usage 从末尾分片合成进 `message_delta`。**166 个测试全绿**（含 S11/S12 自检 review 的修补：解析兜底、首字节语义、护栏⑪覆盖两个转发器、非事件流的 200 拒绝为 502）。**M1 + M2 代码都已完成**；**S13 文档迁移已做**——DSL 里已落地组件标 `current`（去掉 `Milestone2`）、`evidence.md` 补 §8 组件→`文件:行`、`violations.csv` 按实测关掉 M2 相关的 RISK-03/05 并更新 RISK-06、两张 DOT 重渲通过。**M2 真机验收已通过（2026-10-15，`evidence.md` §9）**：真 Claude Code → 网关 → MiMo（OpenAI 协议走翻译路径，模型 `mimo-v2.6-pro`），工具调用往返成功（Write + Read、2 个 `tool_use` + 2 个 `tool_result`），usage 非 0（input 62499 / output 296），RISK-03 据此关闭。**S14 做了"傻瓜式"**：顶栏主状态徽标（未激活时整块变告警色）+ 代理密钥可用把数、上游为空时给三步引导（不摆空表格）、**一键预设厂家**（只收厂家本体 4 条；地址只写核实过的、未核实的明标；模型名刻意不预填）、两个只读诊断按钮（测试连接 / 拉取模型）。测试数以 CI 输出为准；真 exe 上用 UIA 只读走查核到 XAML 绑定真的解析了（徽标与代理密钥行都显示实测值）。**唯一没做的是 `structurizr validate`**：下载 CLI 被本会话策略拦下（「下载并执行未知代码」），命令在「环境与工具」一节，请你跑一次 |
+| 5 编码 | 🟢 **M1 达成（S1–S10）+ M2 全部实现（S11–S12）（2026-10-15）**。真 Claude Code 2.1.300 经网关直通 DeepSeek：对话、工具调用、thinking、图片、中止、一键切换、吊销后立即 401 全部实测通过（记录：`evidence.md` §7）。已有：3 + 1 个项目；`config.json` + DPAPI 只写密钥库；只监听 `127.0.0.1` 的宿主（单实例、托盘常驻）；代理密钥（签发 / 鉴权 / 即刻吊销）；真实 Key 注入（不跟随重定向、零日志、发完即删）；直通转发（只改 `model`、头白名单、真流式、中止传播）；最小 UI（上游与 Key / 代理密钥 / 运行日志 / 设置 + 顶栏一键切换）；运行日志（500 行内存环形缓冲，一行一请求，只拉取）；**发布形态选定为依赖框架**（9 文件 / 约 0.8 MB，一条命令，见 `docs/install.md`），不做开机自启。**S11 已加 OpenAI 上游的翻译路径（请求方向 + 非流式响应）**：Anthropic 请求 → `chat/completions`（system / 文本 / 图片 / tool_use / tool_result / tools / tool_choice / stop_sequences，`stream` 时带 `stream_options.include_usage`，thinking 丢弃 [D4]），非流式响应译回 Anthropic message，翻译路径上 `count_tokens` 直接 404；入口按上游类型分派（Anthropic 走直通、OpenAI 走翻译），上游是 OpenAI 时真实 Key 以 `Authorization: Bearer` 注入。**S12 完成流式**：OpenAI chunk → Anthropic 事件序列（`message_start` / `content_block_start|delta|stop` / `message_delta` / `message_stop`），工具调用的扁平分片按上游 `index` 累积、**块索引严格配对**，名称到齐才开块，收尾补齐所有块关闭，usage 从末尾分片合成进 `message_delta`。**168 个测试全绿**（含 S11/S12 自检 review 的修补：解析兜底、首字节语义、护栏⑪覆盖两个转发器、非事件流的 200 拒绝为 502）。**M1 + M2 代码都已完成**；**S13 文档迁移已做**——DSL 里已落地组件标 `current`（去掉 `Milestone2`）、`evidence.md` 补 §8 组件→`文件:行`、`violations.csv` 按实测关掉 M2 相关的 RISK-03/05 并更新 RISK-06、两张 DOT 重渲通过。**M2 真机验收已通过（2026-10-15，`evidence.md` §9）**：真 Claude Code → 网关 → MiMo（OpenAI 协议走翻译路径，模型 `mimo-v2.6-pro`），工具调用往返成功（Write + Read、2 个 `tool_use` + 2 个 `tool_result`），usage 非 0（input 62499 / output 296），RISK-03 据此关闭。**S14 做了"傻瓜式"**：顶栏主状态徽标（未激活时整块变告警色）+ 代理密钥可用把数、上游为空时给三步引导（不摆空表格）、**一键预设厂家**（只收厂家本体 4 条；地址只写核实过的、未核实的明标；模型名刻意不预填）、两个只读诊断按钮（测试连接 / 拉取模型）。测试数以 CI 输出为准；真 exe 上用 UIA 只读走查核到 XAML 绑定真的解析了（徽标与代理密钥行都显示实测值）。 |
 
 ## 先读这些（按顺序）
 
 1. `docs/architecture/ai-gateway.architecture-understanding.md` —— 决策 D1–D16、不做清单、外部事实（带网址）、两条脊柱、安全梯子。
-2. `docs/architecture/ai-gateway.structurizr.dsl` —— 真相源，L1/L2/L3 三视图，15 个组件。2026-10-15 用 Structurizr CLI v2025.11.09 解析通过；**S13 的改动之后还没重新校验**（CLI 下载被本会话策略拦下）——但改动本身过了结构自检：花括号配平、描述里无尖括号、无死样式、无 `Milestone2` 残留。请按「环境与工具」里的命令跑一次 `validate`。
+2. `docs/architecture/ai-gateway.structurizr.dsl` —— 真相源，L1/L2/L3 三视图，15 个组件。2026-10-15 用 Structurizr CLI v2025.11.09 解析通过；S13 的改动没重跑 `validate`（CLI 下载被拦），但过了结构自检：花括号配平、描述里无尖括号、无死样式、无 `Milestone2` 残留。
 3. `docs/architecture/ai-gateway.dependency-impact-findings.md` —— 为什么是 3 + 1 个项目、十一条护栏、S1 实测教训、两扇后门、UI 层的守法、变更影响。
 4. `docs/architecture/ai-gateway.request-flow.dot` —— 一次请求：鉴权 → 路由 → 直通 / 翻译 → 注入 → 上游。
 5. `docs/architecture/ai-gateway.dependencies.dot` —— 程序集引用、运行时装配、禁止边。
@@ -75,7 +87,7 @@ dotnet test -c Release   # 166 个测试
 | D13 | `IRealKeyVault` 只写 *(10-15)* |
 | D14 | M1 = DeepSeek 直通，零协议翻译 *(10-15)* |
 | D15 | **不做开机自启**（要开机跑就自己把快捷方式丢进 `shell:startup`）*(10-15)* |
-| D16 | 发布形态 = **依赖框架**（win-x64，0.37 MB / 9 文件）；代价：目标机要装 .NET 8 的 Desktop 与 ASP.NET Core 两个运行时 *(10-15 实测四种产物后选定)* |
+| D16 | 发布形态 = **依赖框架**（win-x64，9 文件 / 约 0.8 MB，10-16 实测含图标与 UI 资源后重测）；代价：目标机要装 .NET 8 的 Desktop 与 ASP.NET Core 两个运行时 *(10-15 实测四种产物后选定)* |
 
 ## 2026-10-15 review 改了什么（一段话）
 
@@ -97,7 +109,7 @@ dotnet test -c Release   # 166 个测试
 - 交互式会话（Esc / Ctrl+C 中止、长会话的上下文压缩）没有自动化覆盖——S8 只能用 `-p` 模式跑，需要你自己用一次。
 - **OpenAI 上游怎么填**：类型选「OpenAI」、地址填 API 根（网关在其后追加 `/chat/completions`；例如 DeepSeek 填 `https://api.deepseek.com`、OpenAI 填 `https://api.openai.com/v1`）；真实 Key 以 `Authorization: Bearer` 注入，不是 `x-api-key`。MiMo 的 `mimo-v2.6-pro` 已实测通过（§9）。
 - **M2 真机验收：已通过（2026-10-15）** —— 真 Claude Code → 网关 → MiMo（OpenAI 协议 ⇒ 翻译路径），工具调用往返成功，记录与数字见 `evidence.md` §9。仍然开着的是真机上的**交互式会话**（Esc / Ctrl+C、上下文压缩），一直需要人工跑。
-- **S14 那两个诊断按钮还等你点一次**：真 exe 上「测试连接」与「拉取模型」我只验到"按钮在界面树里、绑定生效"，**没代你点**（UIA 点击不稳）。你在界面上点一下：测试连接该报「地址可达：HTTP …，往返 … ms」；拉取模型对 OpenAI 类上游该把模型名填进「模型」框。
+- **S14 的「拉取模型」还等你点一次**：「测试连接」你已点过，报「地址可达：HTTP 404，往返 117 ms」（404 是预期——base URL 本身不是资源，`evidence.md` §11）；「拉取模型」只验到"按钮在界面树里、绑定生效"，没代你点（UIA 点击不稳）。对 OpenAI 类上游点一下，该把模型名填进「模型」框。
 
 ## 贡献与反馈
 

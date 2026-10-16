@@ -20,15 +20,18 @@ internal sealed record ProviderRow(ProviderConfig Config, bool HasKey)
 
     public string Name => Config.Name;
 
-    public string KindText => ProvidersViewModel.KindText(Config.Kind);
-
     public string BaseUrl => Config.BaseUrl;
 
     public string ModelsText => string.Join(", ", Config.Models);
 
     public string KeyText => HasKey ? "已保存" : "未保存";
 
-    public override string ToString() => $"{Name}，{KindText}，Key {KeyText}";
+    // 主从布局左边只放「认出这是哪一家」要用的信息；类型与地址全称留给右边编辑区
+    public string KindShort => Config.Kind == UpstreamKind.Anthropic ? "Anthropic" : "OpenAI";
+
+    public string Summary => $"{KindShort} · {BaseUrl}";
+
+    public override string ToString() => $"{Name}，{KindShort}，Key {KeyText}";
 }
 
 internal sealed class ProvidersViewModel : ObservableObject
@@ -48,6 +51,7 @@ internal sealed class ProvidersViewModel : ObservableObject
     private string _models = string.Empty;
     private string _modelHint = DefaultModelHint;
     private string _message = string.Empty;
+    private bool _messageIsError;
 
     public ProvidersViewModel(IGatewaySettings settings, IRealKeyVault vault, IUpstreamDiagnostics diagnostics, Action changed)
     {
@@ -104,6 +108,13 @@ internal sealed class ProvidersViewModel : ObservableObject
 
     public bool HasMessage => _message.Length > 0;
 
+    // 需要用户处理的失败：界面据此换成告警色。成功与中性提示一律 False。
+    public bool MessageIsError { get => _messageIsError; private set => Set(ref _messageIsError, value); }
+
+    private void Note(string text) { MessageIsError = false; Message = text; }
+
+    private void Fail(string text) { MessageIsError = true; Message = text; }
+
     // 列表为空时整块换成引导面板 —— 空表格什么都不说，是"第一次用看不懂"的主因。
     public bool IsEmpty => Rows.Count == 0;
 
@@ -119,7 +130,7 @@ internal sealed class ProvidersViewModel : ObservableObject
     {
         Selected = null;
         SelectedPreset = Presets[0];
-        Message = "填好名称、地址和模型后点「保存」。不知道填什么就从上面的「一键预设」里选一家。";
+        Note("填好名称、地址和模型后点「保存」。不知道填什么就从上面的「一键预设」里选一家。");
     }
 
     public void Save()
@@ -131,20 +142,20 @@ internal sealed class ProvidersViewModel : ObservableObject
             {
                 var id = _settings.AddProvider(Name, Kind, BaseUrl, models);
                 Refresh(id);
-                Message = "已添加。下一步：在下面保存这个上游的 Key。";
+                Note("已添加。下一步：在下面保存这个上游的 Key。");
             }
             else
             {
                 _settings.UpdateProvider(Selected.Config with { Name = Name, Kind = Kind, BaseUrl = BaseUrl, Models = models });
                 Refresh(Selected.Id);
-                Message = "已保存修改。";
+                Note("已保存修改。");
             }
 
             _changed();
         }
         catch (ArgumentException ex)
         {
-            Message = ex.Message;
+            Fail(ex.Message);
         }
     }
 
@@ -157,7 +168,7 @@ internal sealed class ProvidersViewModel : ObservableObject
 
         _settings.RemoveProvider(Selected.Id);
         Refresh();
-        Message = "已删除这个上游和它保存的 Key。";
+        Note("已删除这个上游和它保存的 Key。");
         _changed();
     }
 
@@ -170,13 +181,13 @@ internal sealed class ProvidersViewModel : ObservableObject
 
         if (string.IsNullOrWhiteSpace(key))
         {
-            Message = "请先输入 Key。";
+            Fail("请先输入 Key。");
             return;
         }
 
         _vault.Save(Selected.Id, key.Trim());
         Refresh(Selected.Id);
-        Message = "Key 已加密保存在本机，界面里不会再显示它。";
+        Note("Key 已加密保存在本机，界面里不会再显示它。");
         _changed();
     }
 
@@ -185,15 +196,20 @@ internal sealed class ProvidersViewModel : ObservableObject
     {
         if (Selected is null)
         {
-            Message = "先在上面选中一个上游。";
+            Fail("先在上面选中一个上游。");
             return;
         }
 
-        Message = "正在测…";
+        Note("正在测…");
         var report = await _diagnostics.ProbeAsync(Selected.Id);
-        Message = report.Reachable
-            ? $"地址可达：HTTP {report.StatusCode}，往返 {report.RoundTrip!.Value.TotalMilliseconds:0} ms。{report.Problem}　可达不等于 Key 正确 —— Key 对不对以真实请求为准。"
-            : $"不可达：{report.Problem}";
+        if (report.Reachable)
+        {
+            Note($"地址可达：HTTP {report.StatusCode}，往返 {report.RoundTrip!.Value.TotalMilliseconds:0} ms。{report.Problem}　可达不等于 Key 正确 —— Key 对不对以真实请求为准。");
+        }
+        else
+        {
+            Fail($"不可达：{report.Problem}");
+        }
     }
 
     // 只对 OpenAI 类上游有意义：拉回来的模型名填进「模型」框，由用户删减后再保存。
@@ -201,24 +217,24 @@ internal sealed class ProvidersViewModel : ObservableObject
     {
         if (Selected is null)
         {
-            Message = "先在上面选中一个上游。";
+            Fail("先在上面选中一个上游。");
             return;
         }
 
-        Message = "正在拉取…";
+        Note("正在拉取…");
         var report = await _diagnostics.FetchModelsAsync(Selected.Id);
         if (report.Supported)
         {
             Models = string.Join(", ", report.Models);
-            Message = $"拉到 {report.Models.Count} 个模型，已填进上面的「模型」框 —— 删掉不需要的再点「保存」。";
+            Note($"拉到 {report.Models.Count} 个模型，已填进上面的「模型」框 —— 删掉不需要的再点「保存」。");
             return;
         }
 
-        Message = report.Problem!;
+        Fail(report.Problem!);
     }
 
     // 给 async 的诊断调用兜底：只报类型名，不把异常正文丢到界面上（它可能带回上游回显的片段）。
-    public void ReportDiagnosticFailure(Exception ex) => Message = $"诊断失败：{ex.GetType().Name}。可到「运行日志」页确认。";
+    public void ReportDiagnosticFailure(Exception ex) => Fail($"诊断失败：{ex.GetType().Name}。可到「运行日志」页确认。");
 
     public void Refresh(string? selectId = null)
     {
@@ -247,7 +263,7 @@ internal sealed class ProvidersViewModel : ObservableObject
         ModelHint = preset.ExampleModel.Length > 0
             ? $"示例：{preset.ExampleModel} —— 只是示例，换成本厂家当前有效的模型名（上游改名比发版快）。{preset.Note}"
             : $"模型名以本厂家当前文档为准。{preset.Note}";
-        Message = "已按预设填好类型与地址，模型名请自行确认。";
+        Note("已按预设填好类型与地址，模型名请自行确认。");
     }
 
     private void Select(ProviderRow? row)

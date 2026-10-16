@@ -1,6 +1,6 @@
 # 发布与安装（一页）
 
-**产物形态：依赖框架（framework-dependent），win-x64。** 2026-10-15 实测四种产物后选定（数字见 `docs/plan/ai-gateway.implementation-plan.json` 的 S10）：目录 0.37 MB / 9 个文件，热启动到 `/health` 200 约 0.6 秒。自包含最轻也要 79 MB，且"单文件"变体首跑会把 211 MB 解到 `%TEMP%\.net`——都不符合这个项目"轻量极简纯本地"的定位。
+**产物形态：依赖框架（framework-dependent），win-x64。** 2026-10-15 实测四种产物后选定（数字见 `docs/plan/ai-gateway.implementation-plan.json` 的 S10）：目录 9 个文件共 810,961 字节（约 0.8 MB；其中三个 `.pdb` 共 124 KB，删后约 0.66 MB），热启动到 `/health` 200 约 0.6 秒。自包含最轻也要 79 MB，且"单文件"变体首跑会把 211 MB 解到 `%TEMP%\.net`——都不符合这个项目"轻量极简纯本地"的定位。
 
 ## 目标机前提：两个运行时
 

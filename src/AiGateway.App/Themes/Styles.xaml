@@ -1,0 +1,86 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!--
+      不再自持合并 Tokens.xaml：token 引用已全部改成 DynamicResource，运行时按元素树向上找，
+      合并顺序不再影响解析。App.xaml 把 Tokens / Styles / Controls 平铺成一条链，
+      于是「换主题」= 换掉链上的 Tokens 那一个字典，一处生效。
+    -->
+
+    <!-- 隐式控件样式在 Controls.xaml；这里只放文字类样式 -->
+    <Style x:Key="Hint" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="{DynamicResource Type.Caption}" />
+        <Setter Property="Foreground" Value="{DynamicResource Ink.Muted}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <!-- 说明文字限宽：60+ 汉字的满宽长行读起来像免责条款（三轮评审都点到）。
+             HorizontalAlignment 必须显式 Left —— Stretch + MaxWidth 在 WPF 里会居中 -->
+        <Setter Property="MaxWidth" Value="560" />
+        <Setter Property="HorizontalAlignment" Value="Left" />
+        <Setter Property="Margin" Value="0,4,0,0" />
+    </Style>
+
+    <Style x:Key="Message" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource Ink.Accent}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="Margin" Value="0,8,0,0" />
+        <Style.Triggers>
+            <!-- 没消息时不占高度：这几个块一直存在，空白时白占 25px -->
+            <Trigger Property="Text" Value="{x:Null}">
+                <Setter Property="Visibility" Value="Collapsed" />
+            </Trigger>
+            <Trigger Property="Text" Value="">
+                <Setter Property="Visibility" Value="Collapsed" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!--
+      规则：凡是「机器生成、要逐位核对或横向对比」的值（地址 / 端口 / 指纹 / 版本 / 配置片段）
+      一律走这个等宽样式，并把字号收到 Caption 一档。等宽让逐位核对和列对齐都更稳。
+    -->
+    <Style x:Key="Data" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Consolas" />
+        <Setter Property="FontSize" Value="{DynamicResource Type.Caption}" />
+    </Style>
+
+    <Style x:Key="Form.Section" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="{DynamicResource Type.Body}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource Ink.Primary}" />
+    </Style>
+
+    <Style x:Key="FieldLabel" TargetType="TextBlock">
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Margin" Value="0,0,12,0" />
+    </Style>
+
+    <!-- 状态脊上的排版：名称拿到全窗最大字号，模型与说明依次降级 -->
+    <Style x:Key="Spine.Tag" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="{DynamicResource Type.Caption}" />
+        <Setter Property="Foreground" Value="{DynamicResource Ink.Muted}" />
+        <Setter Property="VerticalAlignment" Value="Bottom" />
+        <Setter Property="Margin" Value="0,0,8,2" />
+    </Style>
+
+    <Style x:Key="Spine.Name" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="{DynamicResource Type.Title}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource Ink.Primary}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style x:Key="Spine.Model" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource Ink.Muted}" />
+        <Setter Property="VerticalAlignment" Value="Bottom" />
+        <Setter Property="Margin" Value="8,0,0,2" />
+    </Style>
+
+    <Style x:Key="Spine.Note" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="{DynamicResource Type.Caption}" />
+        <Setter Property="Foreground" Value="{DynamicResource Ink.Muted}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="MaxWidth" Value="250" />
+        <Setter Property="HorizontalAlignment" Value="Left" />
+        <Setter Property="Margin" Value="0,2,0,0" />
+    </Style>
+</ResourceDictionary>

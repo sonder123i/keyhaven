@@ -1,0 +1,77 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=System.Runtime">
+
+    <!--
+      深色主题 = 浅色 Tokens.xaml + 下面这些覆盖。先合并、再覆盖，所以：
+        · 一份字典永远不可能少键（少键在深色下会静默变成透明/丢样式，这类 bug 最难查）；
+        · 不用维护两份完全相同的清单，「不改的键」天然只写一次（度量 Radius/Space/Type 就全继承）。
+
+      换主题的机制见 App.xaml.cs 的 ApplySystemTheme：换掉合并链里的 Tokens 那一个字典。
+      这里覆盖的是「语义不变、值随底色反转」的那些键。
+
+      三条必须理解的规则（照抄浅色值会出错）：
+        1. Surface.Content / Surface.Popup 必须是实色，不能改成白 α —— 前者要盖住底下的空列表；
+        2. Surface.Input 走黑 α（内凹）：亮色下输入框靠「更白」凸起，深色下靠「更暗」凹陷；
+        3. Line.Default 从深发丝翻成浅发丝，否则所有行分隔线、卡片边、分段线会一起消失。
+    -->
+
+    <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="Tokens.xaml" />
+    </ResourceDictionary.MergedDictionaries>
+
+    <!-- 底色层：深蓝黑，比浅色那版更暗更收敛 -->
+    <LinearGradientBrush x:Key="Backdrop.Window" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#0A0D12" Offset="0" />
+        <GradientStop Color="#121822" Offset="0.52" />
+        <GradientStop Color="#0B1016" Offset="1" />
+    </LinearGradientBrush>
+    <RadialGradientBrush x:Key="Backdrop.BlobAccent" GradientOrigin="0.5,0.5" Center="0.5,0.5" RadiusX="0.5" RadiusY="0.5">
+        <GradientStop Color="#1A3D7EBF" Offset="0" />
+        <GradientStop Color="#003D7EBF" Offset="1" />
+    </RadialGradientBrush>
+
+    <!-- 表面：白的 α 值这里表示「抬升」而不是「不透明度」 -->
+    <SolidColorBrush x:Key="Surface.Glass" Color="#1FFFFFFF" />
+    <SolidColorBrush x:Key="Surface.Chrome" Color="#17FFFFFF" />
+    <SolidColorBrush x:Key="Surface.Card" Color="#24FFFFFF" />
+    <SolidColorBrush x:Key="Surface.Content" Color="#161B23" />
+    <SolidColorBrush x:Key="Surface.Control" Color="#1AFFFFFF" />
+    <SolidColorBrush x:Key="Surface.ControlHover" Color="#24FFFFFF" />
+    <SolidColorBrush x:Key="Surface.ControlPressed" Color="#2EFFFFFF" />
+    <SolidColorBrush x:Key="Surface.ControlDisabled" Color="#0DFFFFFF" />
+    <SolidColorBrush x:Key="Surface.Input" Color="#3D000000" />
+    <SolidColorBrush x:Key="Surface.Popup" Color="#1E242E" />
+    <SolidColorBrush x:Key="Surface.RowHover" Color="#12FFFFFF" />
+    <SolidColorBrush x:Key="Surface.RowSelected" Color="#403D7EBF" />
+
+    <!-- 描边：语义与浅色一致，方向反转 -->
+    <SolidColorBrush x:Key="Line.Default" Color="#14FFFFFF" />
+    <SolidColorBrush x:Key="Line.Rim" Color="#2EFFFFFF" />
+    <SolidColorBrush x:Key="Line.Control" Color="#3D7C93A8" />
+    <SolidColorBrush x:Key="Line.Accent" Color="#8C4A90D9" />
+    <SolidColorBrush x:Key="Line.ScrollThumb" Color="#80A0B0C4" />
+
+    <SolidColorBrush x:Key="WindowControl.Hover" Color="#14FFFFFF" />
+    <SolidColorBrush x:Key="WindowControl.Pressed" Color="#2EFFFFFF" />
+
+    <!-- 文字层级：深底上整体提亮一档，保持原来的层级次序 -->
+    <SolidColorBrush x:Key="Ink.Primary" Color="#E3E9F0" />
+    <SolidColorBrush x:Key="Ink.Muted" Color="#94A0AE" />
+    <SolidColorBrush x:Key="Ink.Accent" Color="#6FB0E8" />
+    <SolidColorBrush x:Key="Ink.Subtle" Color="#86929F" />
+    <SolidColorBrush x:Key="Ink.Danger" Color="#FF9C92" />
+    <SolidColorBrush x:Key="Ink.Disabled" Color="#59626D" />
+
+    <!-- 状态：色相不变，明度提到深底上仍能被看见 -->
+    <SolidColorBrush x:Key="Status.Ok.Strong" Color="#4CA56A" />
+    <SolidColorBrush x:Key="Status.Ok.Line" Color="#356B48" />
+    <SolidColorBrush x:Key="Status.Warn.Strong" Color="#D9A03F" />
+    <SolidColorBrush x:Key="Status.Warn.Line" Color="#C9963F" />
+    <SolidColorBrush x:Key="Status.Danger.Background" Color="#3A1C18" />
+    <SolidColorBrush x:Key="Status.Danger.Line" Color="#A94B42" />
+
+    <!-- 阴影：浅色下那层深蓝在深底上完全不可见，得靠纯黑加深来补「浮起」 -->
+    <DropShadowEffect x:Key="Shadow.Panel" BlurRadius="18" ShadowDepth="2" Direction="270" Color="#000000" Opacity="0.45" />
+    <DropShadowEffect x:Key="Shadow.Popup" BlurRadius="14" ShadowDepth="3" Direction="270" Color="#000000" Opacity="0.55" />
+</ResourceDictionary>

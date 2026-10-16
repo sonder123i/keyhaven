@@ -18,6 +18,7 @@ internal sealed class ProxyKeysViewModel : ObservableObject
     private ProxyKeyRow? _selected;
     private string _newLabel = string.Empty;
     private string _message = string.Empty;
+    private bool _messageIsError;
 
     public ProxyKeysViewModel(IProxyKeyRegistry registry, Uri gatewayAddress)
     {
@@ -34,18 +35,25 @@ internal sealed class ProxyKeysViewModel : ObservableObject
 
     public string Message { get => _message; private set => Set(ref _message, value); }
 
+    // 需要用户处理的失败：界面据此换成告警色。成功与中性提示一律 False。
+    public bool MessageIsError { get => _messageIsError; private set => Set(ref _messageIsError, value); }
+
+    private void Note(string text) { MessageIsError = false; Message = text; }
+
+    private void Fail(string text) { MessageIsError = true; Message = text; }
+
     public IssuedProxyKey? Generate()
     {
         if (string.IsNullOrWhiteSpace(NewLabel))
         {
-            Message = "先起个标签，比如「笔记本」，方便以后认出是哪把密钥。";
+            Fail("先起个标签，比如「笔记本」，方便以后认出是哪把密钥。");
             return null;
         }
 
         var issued = _registry.Create(NewLabel.Trim());
         NewLabel = string.Empty;
         Refresh();
-        Message = $"已生成「{issued.Label}」，指纹 {issued.Fingerprint}。";
+        Note($"已生成「{issued.Label}」，指纹 {issued.Fingerprint}。");
         return issued;
     }
 
@@ -59,9 +67,9 @@ internal sealed class ProxyKeysViewModel : ObservableObject
         }
 
         var label = Selected.Label;
-        Message = _registry.Revoke(Selected.Id)
+        Note(_registry.Revoke(Selected.Id)
             ? $"已吊销「{label}」，用它的客户端从下一个请求起会被拒绝。吊销不可恢复，需要时请重新生成。"
-            : $"「{label}」已经是吊销状态。";
+            : $"「{label}」已经是吊销状态。");
         Refresh();
     }
 
@@ -75,7 +83,7 @@ internal sealed class ProxyKeysViewModel : ObservableObject
         var label = Selected.Label;
         _registry.Delete(Selected.Id);
         Refresh();
-        Message = $"已删除「{label}」。";
+        Note($"已删除「{label}」。");
     }
 
     public void Refresh()
