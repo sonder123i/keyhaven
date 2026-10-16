@@ -488,3 +488,7 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Local tool scratch directories (not part of the product)
+.video_agent/
+.workbuddy/
